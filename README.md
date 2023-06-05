@@ -13,9 +13,9 @@ The tool also has a input file, option where for instance we might group a set o
 The annotation profile of a molecule is essentially a report of the evidence that ChEMBL has for that specific structure or, if required, of the molecules that are very similar to it.
 
 
-## MS-QSAR requirements
+## CSANNO requirements
 
-`MSQSAR` is essentially Python software that relies on a number of external libraries. Namely:
+`CSANNO` is essentially Python software that relies on a number of external libraries. Namely:
 
 * numpy
 * requests
@@ -41,7 +41,6 @@ Windows users can omit the `conda` and just use `activate rdkit-env` at the wind
 With Anaconda, numpy is installed by default and installing the others can be performed simply with: 
 
 ```sh
-$ conda install scikit-learn
 $ conda install requests
 ```
 
