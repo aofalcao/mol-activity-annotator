@@ -1,0 +1,31 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: csanno - molecular-activity-annotator
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Andre
+    name-particle: O
+    family-names: Falcao
+    email: aofalcao@fc.ul.pt
+    orcid: 'https://orcid.org/0000-0002-3588-8746'
+    affiliation: DI/FCUL - Universidade de Lisboa
+repository-code: 'https://github.com/aofalcao/mol-activity-annotator'
+abstract: >-
+  csanno is a molecular activity annotator that uses
+  chemical similarity and ChEMBL to search to identify
+  plausible targets of molecules, even if they were never
+  tested and are not present in ChEMBL. The program  will
+  look for close similar molecules and produce reports on
+  the probable targets found.  
+keywords:
+  - Chemical Database Screening
+  - Cheminformatics
+  - ChEMBL
+  - Molecular Activity
+license: MIT
+date-released: '2023-06-06'
