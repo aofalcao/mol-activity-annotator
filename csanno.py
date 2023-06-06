@@ -457,30 +457,19 @@ def merge_T0T1(mols, mols_t0, mol_genes_T0, mols_t1, mol_genes_T1):
     #mols_T0 is a list with ick as key and the chembl_ids aqs value
     #mol_genes_t0 is the gene data for each molecule of T0 found on Chem
     #mols_t1 is a Dictionary with keys the chemblids and keys the similar ids
+    # Deeply fixed (06/06/23) - probably a nasty bug/oversight
     mol_genes_T01={}
     for mid in mols:
-        genes=[]
-        ick = mols[mid][1]      #inchikey of original molecule
-        if ick in mols_t0:
-            cid=mols_t0[ick]        #chemblid from original molecule  
-            if cid in mol_genes_T0:
-                genes += list(mol_genes_T0[cid])
+        genes=list(mol_genes_T0[mid])
         #if this molecule has chembl neighbours
         if mid in mols_t1:
             adjs=mols_t1[mid]
             for a in adjs:
                 if a in mol_genes_T1:
-                    #print(mid,"-->", mol_genes_T1[a])        
                     genes=genes+list(mol_genes_T1[a])
-            #print("--->",genes)
-            mol_genes_T01[mid]=set(genes)
-        else:
-            #print(mid,"--> () " )
-            mol_genes_T01[mid]=set()
-
+        mol_genes_T01[mid]=set(genes)
     #returns the genes referenced in T0 and T1, if any
-    return mol_genes_T01    
-
+    return mol_genes_T01
 
 def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write_files=True, to_screen=False,
                          join_aggregates=False, silent=False, search="A", single_mol=None, ofield="G"):
