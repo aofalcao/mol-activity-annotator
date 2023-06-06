@@ -167,43 +167,42 @@ Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 Running the following command
 
 ```sh
-$ python csanno.py -in anti-dep.sar -sim 0.8 
+$ python csanno.py -in anti-dep.sar -sim 0.7 -report A 
 ```
 
 will produce 2 files. The name of those files is created based on the .sar file. So using `anti-dep.sar` will produce:
 
 * `anti-dep_anno_count_T0.txt` - This is a Tier 0 file and will contain the absolute and relative frequencies of the molecules in the input file that appear to be active in specific targets
-* `anti-dep_anno_count_T1.txt` - This is a Tier 1 file and will contain the the absolute and relative frequencies of the molecules **that are similar** to the molecules in the input file to each specific target in which they wer found active
+* `anti-dep_anno_count_T1.txt` - This is a Tier 1 file and will contain the the absolute and relative frequencies of the molecules **that are similar** to the molecules in the input file to each specific target in which they were found active
 
 The tier 0 file thus refers to the known targets in single-gene essays that are know to bind to these proteins. `anti-dep_anno_count_T0.txt` will look something like this:
 
 
 ```
-SLC6A4               5  1.0000
-SLC6A3               4  0.8000
-SLC6A2               4  0.8000
-SIGMAR1              4  0.8000
-HTR2C                4  0.8000
-NET                  3  0.6000
-KCNH2                3  0.6000
-HTR2B                3  0.6000
-...
+SLC6A4	    5	1.0000
+SLC6A3	    4	0.8000
+SLC6A2	    4	0.8000
+SIGMAR1    4	0.8000
+HTR2C	    4	0.8000
+REP	    3	0.6000
+NET	    3	0.6000
+KCNH2	    3	0.6000
+HTR2B	    3	0.6000
 ```
 
-This file is actually 50 lines long but only the top 8 are show. It shows which are the individual targets common in all of them. As we can see, [SLC6A4](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A4) (the serotonin transporter) is common to all 5 molecules, followed by [SLC6A3](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A3) and [SLC6A2](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A2) the dopamine and noradrenaline transporter, respectively. Also the the [Sigma1](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SIGMA1) Receptor and the [Serotonin 2C receptor](https://www.genecards.org/cgi-bin/carddisp.pl?gene=HTR2C) are known to be affected by 4 out of 5 molecules
+This file is actually 52 lines long but only the top 8 are shown. It shows which are the individual targets common in all of them. As we can see, [SLC6A4](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A4) (the serotonin transporter) is common to all 5 molecules, followed by [SLC6A3](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A3) and [SLC6A2](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A2) the dopamine and noradrenaline transporter, respectively. Also the the [Sigma1](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SIGMA1) Receptor and the [Serotonin 2C receptor](https://www.genecards.org/cgi-bin/carddisp.pl?gene=HTR2C) are known to be affected by 4 out of 5 molecules
 
-On the other hand we can look at `anti-dep_anno_count_T1.txt` for potential targets, as these refer to the activity profiles of similar molecules (in this case 80% similar) 
+On the other hand we can look at `anti-dep_anno_count_T1.txt` for potential targets, as these refer to the activity profiles of similar molecules (in this case 70% similar) 
 
 ```
-SLC6A4              90  0.4918
-SLC6A2              38  0.2077
-SLC6A3              28  0.1530
-ADRA1A              16  0.0874
-NET                 13  0.0710
-SIGMAR1             12  0.0656
-HTR2A               11  0.0601
-DRD2                10  0.0546
-...
+SLC6A4	   64	0.6737
+SLC6A2	   29	0.3053
+SLC6A3	   24	0.2526
+REP	    8	0.0842
+ADRA1A	    8	0.0842
+NET	    7	0.0737
+HTR2A	    6	0.0632
+SIGMAR1    4	0.0421
 ```
 of the 183 molecules found, the top spots were essentially the same, but the [ADRA1A](https://www.genecards.org/cgi-bin/carddisp.pl?gene=ADRA1A) Adrenergic A1 receptor and the [NET](https://www.genecards.org/cgi-bin/carddisp.pl?gene=NET), the norepinephrine transporter, appear with a high representativity. Troubling might be the presence of [HTR2A](https://www.genecards.org/cgi-bin/carddisp.pl?gene=HTR2A), in 6% of all matches. 
 
@@ -215,28 +214,34 @@ To have a better look at which of the base molecules are associated, we may run 
 Therefore `anti-dep_annotations_T0.txt` with the above options will look like this (end of lines arranged for this report, in the original, only one line per molecule is produced):
 
 ```
-Sertraline: CYP2D6 HTR2B  CACNA1C CHRM2  SIGMAR1 CYP2C19 ADRA2C HTR2C  SLC6A3 CHRM4  ADRA2B CYP3A4
-            SLC6A2 KCNH2  SLC6A4 ADRA1B KMT2A  CHRM1  HTR2A  MC5R   ADRA2A CHRM5  
-Citalopran: KCNH2  SLC22A1 HTR2B  HRH1   SLC6A4 ADRA1A HTR2C  NET    SLC6A3 ADRA1B SMN2   SIGMAR1 
-            ADRA1D SLC6A2 
-Fluoxetine: CYP2D6 HTR3A  CACNA1C LMNA   SIGMAR1 CYP2C19 CHRM3  CYP2C9 HRH1   HTR2C  SLC6A3 ADRA2B 
-            KCNK9  CYP3A4 SLC6A2 KCNH2  SLCO1B3 DRD2   SLC6A4 ACHE   CYP2B6 SLCO2B1 CYP1A2 HRH3   
-            CHRM1  HTR6   HTR2A  NET    ABCB1  CYP2C8 SLCO1B1 KCNK2  ADRA2A CHRM5  
-Tradozone: HTR1B  DRD2   HRH1   ADRA2C DRD3   ADRA1A HTR2B  HTR2C  HTR1A  SLC6A4 ALB    ADRA1B ADRA2A
-           ADRA1D SIGMAR1 ADRA2B HTR2A  FAAH   
-Venlafaxine: SLC6A4 ADRA1A SLC6A2 SLC6A3 LMNA   NET    
+Sertraline:	ADRA2B	CACNA1C	KMT2A	SIGMAR1	CYP3A4	ADRA2A	HTR2B	REP	CYP2C19	
+              CHRM1	KCNH2	CHRM4	ADRA2C	MC5R	CHRM5	HTR2A	SLC6A3	HTR2C	CYP2D6	ADRA1B	
+              TMEM97	SLC6A2	CHRM2	SLC6A4
+Citalopran:	TMEM97	ADRA1B	SLC6A2	HRH1	KCNH2	ADRA1A	NET	SIGMAR1	SMN2	ADRA1D	
+              SLC6A3	HTR2C	REP	HTR2B	SLC6A4	SLC22A1
+Fluoxetine:	ABCB1	ADRA2B	CACNA1C	KCNK9	SIGMAR1	NET	HRH3	ACHE	CYP3A4	
+              ADRA2A	SLCO1B1	HTR3A	CYP2C19	CHRM1	CYP2C9	HRH1	KCNH2	LMNA	
+              KCNK2	CHRM5	CYP2B6	HTR6	CHRM3	HTR2A	DRD2	SLC6A3	SLCO2B1	HTR2C	
+              CYP1A2	CYP2D6	CYP2C8	SLC6A2	SLCO1B3	SLC6A4
+Tradozone:	ADRA2C	HTR1B	ADRA2B	SLC6A4	HRH1	ADRA1A	SIGMAR1	HTR2A	DRD3	ALB	
+              ADRA1D	DRD2	FAAH	HTR2C	ADRA2A	HTR2B	HTR1A	ADRA1B
+Venlafaxine:	SLC6A2	ADRA1A	NET	LMNA	SLC6A3	REP	SLC6A4
 ```
 
 Similarly `anti-dep_annotations_T1.txt` with the above options will look like this:
 
 
 ```
-Sertraline: CYP2D6 CYP2C9 SLC6A4 NET    SLC6A3 SLC6A2 
-Citalopran: CYP2C9 SLC6A4 NFKB1  NET    SLC6A3 CYP2C19 ALOX15 CHRM1  CYP3A4 SLC6A2 
-Fluoxetine: CYP2D6 HRH3   KCNH2  TSHR   SLC6A4 RORC   CACNA1C NFKB1  KCNK2  SLC6A3 KCNC1  CYP1A2 
-            CYP2C19 CHRM1  CYP3A4 SLC6A2 
-Tradozone: DRD2   HRH1   ADRA1A HTR1A  PDE10A SMN2   SIGMAR1 HTR2A  SLC6A2 
-Venlafaxine: SLC6A4 ADRA1A SLC6A2 SLC6A3 NET
+Sertraline:	MAPK1	CHRM1	SLC6A2	NS1	NET	SLCO1B3	SLC6A3	TP53	REP	SLCO1B1
+              SLC6A4
+Citalopran:	ALOX15	MAPK1	NFKB1	CHRM1	CYP2C9	SLC6A2	REP	NET	SLCO1B3	LMNA	
+              SLC6A3	CYP3A4	SLCO1B1	SLC6A4	CYP2C19
+Fluoxetine:	CYP2D6	NFKB1	CHRM1	SLC6A2	BLM	NET	SMN2	LMNA	AMPC	RORC	TSHR	
+              SLC6A3	CYP3A4	CYP1A2	HTR2C	HPGD	SLC6A4	CYP2C19
+Tradozone:	SLCO1B3	SLCO1B1	HLA-A	REP
+Venlafaxine:	SLC6A4	SLC6A2	ADRA1A	SLC6A3	REP
 ```
 
-As an example of a possible conclusion is that in some of the 80% similar molecules to Sertraline some of them were verified active on NET and CYP2C9, strongly suggesting that Sertraline itself, although not registered as active in these two targets, might actually be so. Other types of observations might be held for other molecules.
+Please note that these results are the targets **that do not apear on Tier 0**, meaning possible targets never before tested
+
+As an example of a possible conclusion is that in some of the 70% similar molecules to Sertraline some of them were verified active on NET and CYP2C9, strongly suggesting that Sertraline itself, although not registered as active in these two targets, might actually be so. Other types of observations might be held for other molecules.
