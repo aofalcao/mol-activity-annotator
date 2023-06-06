@@ -167,7 +167,7 @@ Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 Running the following command
 
 ```sh
-$ python csanno.py -in anti-dep.sar -sim 0.7 -report A 
+$ python csanno.py -in anti-dep.sar -sim 0.7 -report AD 
 ```
 
 will produce 2 files. The name of those files is created based on the .sar file. So using `anti-dep.sar` will produce:
@@ -232,14 +232,21 @@ Similarly `anti-dep_annotations_T1.txt` with the above options will look like th
 
 
 ```
-Sertraline:	MAPK1	CHRM1	SLC6A2	NS1	NET	SLCO1B3	SLC6A3	TP53	REP	SLCO1B1
-              SLC6A4
-Citalopran:	ALOX15	MAPK1	NFKB1	CHRM1	CYP2C9	SLC6A2	REP	NET	SLCO1B3	LMNA	
-              SLC6A3	CYP3A4	SLCO1B1	SLC6A4	CYP2C19
-Fluoxetine:	CYP2D6	NFKB1	CHRM1	SLC6A2	BLM	NET	SMN2	LMNA	AMPC	RORC	TSHR	
-              SLC6A3	CYP3A4	CYP1A2	HTR2C	HPGD	SLC6A4	CYP2C19
-Tradozone:	SLCO1B3	SLCO1B1	HLA-A	REP
-Venlafaxine:	SLC6A4	SLC6A2	ADRA1A	SLC6A3	REP
+Sertraline:	NFKB1	TMEM97	SLCO1B3	SLCO1B1	REP	HTR2A	KCNH2	CYP3A4	ADRA1B	
+              CHRM2	SLC6A2	NET	NS1	MAPK1	SLC6A3	ADRA2A	SIGMAR1	CYP1A2	FFP	
+              ADRA2C	KMT2A	TP53	MC5R	CACNA1C	HTR2B	CYP2D6	CHRM4	SLC6A4	ADRA2B	
+              CHRM1	CHRM5	HTR2C	CYP2C19
+Citalopran:	NFKB1	TMEM97	SLCO1B3	SLCO1B1	REP	KCNH2	ADRA1B	CYP3A4	SLC6A2	
+              SLC22A1	ADRA1D	ADRA1A	NET	MAPK1	SLC6A3	SIGMAR1	ALOX15	SMN2	
+              CYP2C9	HTR2B	SLC6A4	CHRM1	HRH1	LMNA	HTR2C	CYP2C19
+Fluoxetine:	CYP2B6	NFKB1	HTR3A	CYP2C8	SLCO1B3	SLCO1B1	HTR2A	KCNK9	KCNH2	
+              DRD2	CYP3A4	KCNK2	SLC6A2	TSHR	NET	ADRA2A	SLC6A3	SIGMAR1	SLCO2B1
+              CYP1A2	HTR6	HRH3	SMN2	CYP2C9	CACNA1C	BLM	CYP2D6	ACHE	ABCB1	
+              RORC	SLC6A4	ADRA2B	CHRM1	HRH1	LMNA	CHRM3	CHRM5	HTR2C	AMPC	HPGD	
+              CYP2C19
+Tradozone:	FAAH	SLCO1B3	SLCO1B1	REP	HTR2A	DRD2	ADRA1B	SLC6A2	ADRA1D	
+              ADRA1A	HTR1A	ADRA2A	SIGMAR1	ADRA2C	HTR2B	ADRA2B	SLC6A4	HRH1	HTR2C	HTR1B	ALB	DRD3	HLA-A
+Venlafaxine:	SLC6A4	SLC6A2	LMNA	ADRA1A	NET	SLC6A3	REP
 ```
 
 Please note that these results are the targets **that do not apear on Tier 0**, meaning possible targets never before tested
