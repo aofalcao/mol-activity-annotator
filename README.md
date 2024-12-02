@@ -249,6 +249,6 @@ Tradozone:	FAAH	SLCO1B3	SLCO1B1	REP	HTR2A	DRD2	ADRA1B	SLC6A2	ADRA1D
 Venlafaxine:	SLC6A4	SLC6A2	LMNA	ADRA1A	NET	SLC6A3	REP
 ```
 
-Please note that these results are the targets **that do not apear on Tier 0**, meaning possible targets never before tested
+Please note that these results will include targets that do not apear on Tier 0, meaning possible targets never before tested, but some overlaps may naturally occur.
 
 As an example of a possible conclusion is that in some of the 70% similar molecules to Sertraline some of them were verified active on NET and CYP2C9, strongly suggesting that Sertraline itself, although not registered as active in these two targets, might actually be so. Other types of observations might be held for other molecules.
