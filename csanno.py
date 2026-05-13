@@ -27,19 +27,167 @@ from rdkit.Chem import AllChem
 from rdkit.Chem.inchi import InchiToInchiKey
 import pickle
 import os
+import time
 
 import json
+import copy
 import requests
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+from csanno_reports import (
+    build_run_metadata, normalise_report_format, write_combined_report,
+    make_reports, make_reports_x, merge_T0T1, merge_T1,
+    write_report_aggregated, write_report_detail, write_reports_for_channel, write_run_info,
+)
 
 DEFAULT_CHEMBL_SERVER = "https://www.ebi.ac.uk"
 REQUEST_TIMEOUT = 30
+REQUEST_RETRIES = 2
+REQUEST_RETRY_DELAY_SECONDS = 0.75
+RETRIABLE_HTTP_STATUS_CODES = set([429, 500, 502, 503, 504])
 TARGET_CACHE_JSON = "./btargets_cache.json"
 TARGET_CACHE_PICKLE = "./btargets.pickle"
+DEFAULT_ACTIVITY_RULES_FILE = "csanno_default_rules.yaml"
+
+# Collected during one CSANNO run. These are reported once, instead of printing
+# one warning line for every transient ChEMBL failure.
+REQUEST_FAILURES = []
+
+DEFAULT_ACTIVITY_RULES = {
+    "activity_rules_version": "csanno-default-0.5",
+    "profile_name": "CSANNO default activity rules",
+    "profile_description": "Historical CSANNO thresholds with corrected pKi/pIC50 direction.",
+    "default_result": "NA",
+    "missing_relation_default": "=",
+    "allowed_results": ["A", "N", "NA"],
+    "unit_multipliers": {"nM": 1, "uM": 1000, "µM": 1000, "mM": 1000000},
+    "rules": [
+        {
+            "name": "low_concentration_activity",
+            "standard_types": ["Ki", "IC50", "Kd", "EC50", "AC50", "Potency"],
+            "value_field": "value",
+            "units_field": "units",
+            "relation_field": "rel",
+            "unit_conversion": True,
+            "converted_unit": "nM",
+            "missing_value_result": "N",
+            "missing_units_result": "NA",
+            "unsupported_relation_result": "NA",
+            "relations": {
+                "=":  {"operator": "<", "threshold": 10000, "true_result": "A",  "false_result": "N"},
+                ">":  {"operator": "<", "threshold": 10000, "true_result": "NA", "false_result": "N"},
+                ">=": {"operator": "<", "threshold": 10000, "true_result": "NA", "false_result": "N"},
+                "<":  {"operator": "<", "threshold": 10000, "true_result": "A",  "false_result": "NA"},
+                "<=": {"operator": "<", "threshold": 10000, "true_result": "A",  "false_result": "NA"}
+            }
+        },
+        {
+            "name": "inhibition_positive_response",
+            "standard_types": ["INH", "Inhibition"],
+            "value_field": "value",
+            "relation_field": "rel",
+            "missing_value_result": "N",
+            "unsupported_relation_result": "NA",
+            "relations": {
+                "=":  {"operator": ">", "threshold": 0, "true_result": "A",  "false_result": "N"},
+                ">":  {"operator": ">", "threshold": 0, "true_result": "A",  "false_result": "N"},
+                ">=": {"operator": ">", "threshold": 0, "true_result": "A",  "false_result": "N"},
+                "<":  {"operator": ">", "threshold": 0, "true_result": "NA", "false_result": "N"},
+                "<=": {"operator": ">", "threshold": 0, "true_result": "NA", "false_result": "N"}
+            }
+        },
+        {
+            "name": "p_activity_high_value_active",
+            "standard_types": ["pKi", "pIC50"],
+            "value_field": "value",
+            "relation_field": "rel",
+            "missing_value_result": "N",
+            "unsupported_relation_result": "NA",
+            "relations": {
+                "=":  {"operator": ">", "threshold": 5.0, "true_result": "A",  "false_result": "N"},
+                ">":  {"operator": ">", "threshold": 5.0, "true_result": "A",  "false_result": "NA"},
+                ">=": {"operator": ">", "threshold": 5.0, "true_result": "A",  "false_result": "NA"},
+                "<":  {"operator": ">", "threshold": 5.0, "true_result": "NA", "false_result": "N"},
+                "<=": {"operator": ">", "threshold": 5.0, "true_result": "NA", "false_result": "N"}
+            }
+        },
+        {
+            "name": "generic_activity_positive_response",
+            "standard_types": ["Activity"],
+            "value_field": "value",
+            "units_field": "units",
+            "relation_field": "rel",
+            "units_allowed": ["&"],
+            "result_if_unit_mismatch": "NA",
+            "missing_value_result": "N",
+            "unsupported_relation_result": "NA",
+            "relations": {
+                "=": {"operator": ">", "threshold": 0, "true_result": "A", "false_result": "N"}
+            }
+        }
+    ]
+}
 
 
 def warn(msg, silent=False):
     if not silent:
         print("WARNING: %s" % msg)
+
+
+def reset_request_failures():
+    del REQUEST_FAILURES[:]
+
+
+def _clean_request_params(params):
+    if params is None:
+        return {}
+    try:
+        return {str(key): str(value) for key, value in params.items()}
+    except AttributeError:
+        return {"params": str(params)}
+
+
+def record_request_failure(url, params=None, status_code=None, error=None):
+    REQUEST_FAILURES.append({
+        "url": str(url),
+        "params": _clean_request_params(params),
+        "status_code": status_code,
+        "error": str(error) if error is not None else "",
+    })
+
+
+def get_request_failure_summary(example_limit=8):
+    by_status = {}
+    by_endpoint = {}
+    for item in REQUEST_FAILURES:
+        status = str(item.get("status_code") or "network/non-http")
+        by_status[status] = by_status.get(status, 0) + 1
+        endpoint = item.get("url", "")
+        by_endpoint[endpoint] = by_endpoint.get(endpoint, 0) + 1
+    examples = REQUEST_FAILURES[:example_limit]
+    return {
+        "count": len(REQUEST_FAILURES),
+        "by_status": by_status,
+        "by_endpoint": by_endpoint,
+        "examples": examples,
+    }
+
+
+def print_request_failure_summary(silent=False):
+    summary = get_request_failure_summary()
+    if summary.get("count", 0) == 0 or silent:
+        return
+    pieces = []
+    for status, count in sorted(summary.get("by_status", {}).items()):
+        pieces.append("%s: %d" % (status, count))
+    warn("Some ChEMBL/HTTP requests failed after retry (%d total; %s). "
+         "The run continued, but affected molecules were treated as having no retrievable data. "
+         "See the JSON metadata request_warnings block for examples."
+         % (summary.get("count", 0), ", ".join(pieces)), silent)
 
 
 def normalise_chembl_server(chembl_server):
@@ -56,6 +204,161 @@ def safe_float(x):
     except (TypeError, ValueError):
         return None
 
+
+
+
+def normalise_relation(rel, activity_rules=None):
+    if activity_rules is None:
+        activity_rules = DEFAULT_ACTIVITY_RULES
+    if rel is None or str(rel).strip() == "":
+        return activity_rules.get("missing_relation_default", "=")
+    rel = str(rel).strip()
+    if rel in ["'='", '"="']:
+        return "="
+    return rel
+
+
+def copy_default_activity_rules():
+    return copy.deepcopy(DEFAULT_ACTIVITY_RULES)
+
+
+def load_activity_rules(rules_file=None, silent=False):
+    """
+    Loads activity classification rules from YAML.
+    If no rule file is supplied, CSANNO first looks for csanno_default_rules.yaml
+    beside this script and in the current directory. If no file is found, the
+    internal default rules are used.
+    """
+    candidate_files = []
+    if rules_file is not None and str(rules_file).strip() != "":
+        candidate_files.append(str(rules_file).strip())
+    else:
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            candidate_files.append(os.path.join(script_dir, DEFAULT_ACTIVITY_RULES_FILE))
+        except NameError:
+            pass
+        candidate_files.append(DEFAULT_ACTIVITY_RULES_FILE)
+
+    rules = None
+    source = "internal-default"
+    found_file = None
+    for candidate in candidate_files:
+        if candidate is not None and os.path.isfile(candidate):
+            found_file = candidate
+            break
+
+    if found_file is not None:
+        if yaml is None:
+            raise ValueError("PyYAML is required to read activity rule files. Install pyyaml or omit -rules.")
+        try:
+            with open(found_file, "rt") as fil:
+                rules = yaml.safe_load(fil)
+            source = found_file
+        except Exception as exc:
+            raise ValueError("Could not read activity rules file %s: %s" % (found_file, exc))
+    else:
+        if rules_file is not None and str(rules_file).strip() != "":
+            raise ValueError("Activity rules file not found: %s" % rules_file)
+        rules = copy_default_activity_rules()
+
+    validate_activity_rules(rules)
+    rules["_source"] = source
+    if not silent:
+        print("Activity rules:", rules.get("activity_rules_version", "unknown"), "[%s]" % source)
+    return rules
+
+
+def validate_activity_rules(activity_rules):
+    if not isinstance(activity_rules, dict):
+        raise ValueError("Activity rules must be a YAML mapping/dictionary")
+    if "rules" not in activity_rules or not isinstance(activity_rules.get("rules"), list):
+        raise ValueError("Activity rules must contain a 'rules' list")
+    if "default_result" not in activity_rules:
+        activity_rules["default_result"] = "NA"
+    if "allowed_results" not in activity_rules:
+        activity_rules["allowed_results"] = ["A", "N", "NA"]
+
+    allowed = set(activity_rules.get("allowed_results", ["A", "N", "NA"]))
+    if activity_rules.get("default_result") not in allowed:
+        raise ValueError("default_result must be one of: %s" % ", ".join(sorted(allowed)))
+
+    for i, rule in enumerate(activity_rules.get("rules", []), 1):
+        if not isinstance(rule, dict):
+            raise ValueError("Activity rule %d is not a mapping/dictionary" % i)
+        if "standard_types" not in rule or not isinstance(rule.get("standard_types"), list):
+            raise ValueError("Activity rule %d must contain a standard_types list" % i)
+        if "relations" not in rule or not isinstance(rule.get("relations"), dict):
+            raise ValueError("Activity rule %d must contain a relations mapping" % i)
+        for rel in rule.get("relations", {}):
+            rel_rule = rule.get("relations", {}).get(rel)
+            if not isinstance(rel_rule, dict):
+                raise ValueError("Relation rule '%s' in activity rule %d is not a mapping" % (rel, i))
+            for result_key in ["true_result", "false_result"]:
+                if rel_rule.get(result_key) not in allowed:
+                    raise ValueError("%s in rule %d relation %s must be one of: %s" %
+                                     (result_key, i, rel, ", ".join(sorted(allowed))))
+
+
+def compare_rule_value(value, operator, threshold):
+    if operator == "<":
+        return value < threshold
+    if operator == "<=":
+        return value <= threshold
+    if operator == ">":
+        return value > threshold
+    if operator == ">=":
+        return value >= threshold
+    if operator in ["=", "=="]:
+        return value == threshold
+    if operator in ["!=", "<>"]:
+        return value != threshold
+    raise ValueError("Unsupported activity-rule operator: %s" % operator)
+
+
+def apply_activity_rule(act, rule, activity_rules):
+    value_field = rule.get("value_field", "value")
+    relation_field = rule.get("relation_field", "rel")
+    units_field = rule.get("units_field", "units")
+
+    v = safe_float(act.get(value_field))
+    if v is None:
+        return rule.get("missing_value_result", activity_rules.get("default_result", "NA"))
+
+    unit = act.get(units_field)
+    if unit is not None:
+        unit = str(unit).strip()
+
+    if rule.get("unit_conversion", False) == True:
+        multipliers = activity_rules.get("unit_multipliers", {})
+        if unit not in multipliers:
+            return rule.get("missing_units_result", activity_rules.get("default_result", "NA"))
+        v = v * safe_float(multipliers.get(unit))
+
+    if "units_allowed" in rule:
+        units_allowed = rule.get("units_allowed", [])
+        if unit not in units_allowed:
+            return rule.get("result_if_unit_mismatch", activity_rules.get("default_result", "NA"))
+
+    rel = normalise_relation(act.get(relation_field), activity_rules=activity_rules)
+    relations = rule.get("relations", {})
+    if rel not in relations:
+        return rule.get("unsupported_relation_result", activity_rules.get("default_result", "NA"))
+
+    rel_rule = relations[rel]
+    threshold = safe_float(rel_rule.get("threshold"))
+    if threshold is None:
+        return rule.get("unsupported_relation_result", activity_rules.get("default_result", "NA"))
+
+    try:
+        is_true = compare_rule_value(v, rel_rule.get("operator"), threshold)
+    except ValueError:
+        return rule.get("unsupported_relation_result", activity_rules.get("default_result", "NA"))
+
+    if is_true:
+        return rel_rule.get("true_result", activity_rules.get("default_result", "NA"))
+    else:
+        return rel_rule.get("false_result", activity_rules.get("default_result", "NA"))
 
 def get_chem_data(smiles):
     if smiles is None:
@@ -155,20 +458,50 @@ def read_molecules(fname, silent=False):
 #finally we get the targets
 
 
-def read_url(url, params=None, timeout=REQUEST_TIMEOUT, silent=True):
-    try:
-        response = requests.get(url, params=params, timeout=timeout)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.Timeout:
-        warn("Request timed out: %s" % url, silent)
+def read_url(url, params=None, timeout=REQUEST_TIMEOUT, silent=True, retries=REQUEST_RETRIES,
+             retry_delay=REQUEST_RETRY_DELAY_SECONDS, warn_immediately=False):
+    """Read a JSON URL with small retry/backoff handling for public web-service glitches."""
+    last_error = None
+    last_status = None
+    for attempt in range(int(retries) + 1):
+        try:
+            response = requests.get(url, params=params, timeout=timeout)
+            last_status = response.status_code
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.Timeout as exc:
+            last_error = exc
+            last_status = None
+        except requests.exceptions.HTTPError as exc:
+            last_error = exc
+            response = getattr(exc, "response", None)
+            last_status = getattr(response, "status_code", last_status)
+        except requests.exceptions.RequestException as exc:
+            last_error = exc
+            response = getattr(exc, "response", None)
+            last_status = getattr(response, "status_code", last_status)
+        except ValueError as exc:
+            # HTTP succeeded, but the payload was not valid JSON. Retrying is unlikely
+            # to help unless it was a transient proxy/service page.
+            last_error = exc
+            last_status = getattr(locals().get("response", None), "status_code", last_status)
+
+        is_retriable = (last_status in RETRIABLE_HTTP_STATUS_CODES) or isinstance(last_error, requests.exceptions.Timeout)
+        if is_retriable and attempt < int(retries):
+            time.sleep(float(retry_delay) * (2 ** attempt))
+            continue
+
+        record_request_failure(url, params=params, status_code=last_status, error=last_error)
+        if warn_immediately:
+            if isinstance(last_error, requests.exceptions.Timeout):
+                warn("Request timed out after retry: %s" % url, silent)
+            elif isinstance(last_error, ValueError):
+                warn("Could not decode JSON response from %s" % url, silent)
+            else:
+                warn("Request failed after retry for %s: %s" % (url, last_error), silent)
         return None
-    except requests.exceptions.RequestException as exc:
-        warn("Request failed for %s: %s" % (url, exc), silent)
-        return None
-    except ValueError:
-        warn("Could not decode JSON response from %s" % url, silent)
-        return None
+
+    return None
 
 
 def load_target_cache(silent=False):
@@ -223,36 +556,63 @@ def get_chembl_id(inchikey, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
         return False
 
 
+def _normalise_chembl_next_url(chembl_server, next_ref):
+    if next_ref is None or str(next_ref).strip() == "":
+        return None
+    next_ref = str(next_ref)
+    if next_ref.startswith("http://") or next_ref.startswith("https://"):
+        return next_ref
+    if next_ref.startswith("/"):
+        return normalise_chembl_server(chembl_server) + next_ref
+    return normalise_chembl_server(chembl_server) + "/" + next_ref
+
+
+def _extract_activity_records(data, mol_id, silent=False):
+    activities = []
+    for act in (data or {}).get("activities", []):
+        try:
+            record = {"assay_id": act.get("assay_chembl_id"),
+                      "target_id": act.get('target_chembl_id'),
+                      "assay_type": act.get('standard_type'),
+                      "units": act.get('standard_units'),
+                      "value": act.get('standard_value'),
+                      "rel": act.get('standard_relation'),
+                      "pvalue": act.get('pchembl_value')}
+            if record["target_id"] is not None:
+                activities.append(record)
+        except (AttributeError, KeyError) as exc:
+            warn("Skipping malformed activity for %s: %s" % (mol_id, exc), silent)
+    return activities
+
+
 def get_activities_chembl(mol_id, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
-    """
-    For a given molecule (mol_id in chembl) will return the possible activities
+    """For a given ChEMBL molecule id, return activity records.
+
+    ChEMBL activity responses are paginated. Using a normal page size and
+    following page_meta['next'] is gentler on the public service than asking
+    for a special all-at-once response.
     """
     if mol_id is None or mol_id is False:
         return []
 
     chembl_server = normalise_chembl_server(chembl_server)
     url = chembl_server + "/chembl/api/data/activity.json"
-    params = {"molecule_chembl_id": mol_id, "format": "json", "limit": 0}
-    data = read_url(url, params=params, silent=silent)
-    if data is None:
-        return []
-    
+    params = {"molecule_chembl_id": mol_id, "format": "json", "limit": 1000}
+
     activities = []
-    for act in data.get("activities", []):
-        try:
-            D = {"assay_id": act.get("assay_chembl_id"),
-                 "target_id": act.get('target_chembl_id'),
-                 "assay_type": act.get('standard_type'),
-                 "units": act.get('standard_units'), 
-                 "value": act.get('standard_value'),
-                 "rel": act.get('standard_relation'),
-                 "pvalue": act.get('pchembl_value')}
-            if D["target_id"] is not None:
-                activities.append(D)
-        except (AttributeError, KeyError) as exc:
-            warn("Skipping malformed activity for %s: %s" % (mol_id, exc), silent)
+    while url is not None:
+        data = read_url(url, params=params, silent=silent)
+        # Only the first request uses params; ChEMBL's page_meta.next already
+        # contains all filters and offsets for subsequent pages.
+        params = None
+        if data is None:
+            break
+        activities.extend(_extract_activity_records(data, mol_id, silent=silent))
+        next_ref = (data.get("page_meta", {}) or {}).get("next")
+        url = _normalise_chembl_next_url(chembl_server, next_ref)
 
     return activities
+
     
 
 def get_targets_chembl(tid, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
@@ -392,248 +752,22 @@ def get_targets_info_chembl(mol_list, data_type="inchikeys", silent=False, chemb
     return mol_ids, mol_acts, btargets
 
 
-def check_activity(act):
-    mult_units = {"nM": 1, "uM": 1000, "µM": 1000, "mM": 1000000}
+def check_activity(act, activity_rules=None):
+    if activity_rules is None:
+        activity_rules = DEFAULT_ACTIVITY_RULES
+
     assay_type = act.get("assay_type")
-    rel = act.get("rel")
-    unit = act.get("units")
+    if assay_type is None:
+        return activity_rules.get("default_result", "NA")
 
-    if rel is None or rel == "":
-        rel = "="
+    for rule in activity_rules.get("rules", []):
+        if assay_type in rule.get("standard_types", []):
+            return apply_activity_rule(act, rule, activity_rules)
 
-    # Standard concentration readouts. Values are converted to nM.
-    if assay_type in ["Ki", "IC50", "Kd", "EC50", "AC50", "Potency"]:
-        if unit in mult_units: 
-            mult = mult_units[unit]
-        else:
-            return "NA"
-
-        v = safe_float(act.get("value"))
-        if v is None:
-            return "N"
-        v = v * mult
-
-        if rel == "=": 
-            return "A" if v < 10000 else "N"
-
-        elif rel in [">", ">="]:
-            return "NA" if v < 10000 else "N"
-
-        elif rel in ["<", "<="]:
-            return "A" if v < 10000 else "NA"
-
-        else:
-            return "NA"
-            
-    elif assay_type in ["INH", "Inhibition"]:
-        v = safe_float(act.get("value"))
-        if v is None:
-            return "N"
-
-        if rel in ["=", ">", ">="]:
-            return "A" if v > 0 else "N"
-        elif rel in ["<", "<="]:
-            return "NA" if v > 0 else "N"
-        else:
-            return "NA"
-    
-    elif assay_type in ["pKi", "pIC50"]:
-        v = safe_float(act.get("value"))
-        if v is None:
-            return "N"
-
-        # pKi/pIC50 are -log10(M). A value of 5 corresponds to 10,000 nM.
-        # Higher p-values mean stronger activity, so this is the opposite direction
-        # from raw Ki/IC50 concentration values.
-        if rel == "=":
-            return "A" if v > 5.0 else "N"
-        elif rel in [">", ">="]:
-            return "A" if v > 5.0 else "NA"
-        elif rel in ["<", "<="]:
-            return "NA" if v > 5.0 else "N"
-        else:
-            return "NA"
-
-    elif assay_type in ["Activity"]:
-        v = safe_float(act.get("value"))
-        if v is None:
-            return "N"
-        if unit == "&":
-            return "A" if v > 0 else "N"
-        else:
-            return "NA"
-    else:
-        return "NA"
+    return activity_rules.get("default_result", "NA")
     
     
 
-def gene_counting(mols, mol_active_genes):
-    #This is where the report is concluded
-    #this is where we count genes
-    genes = []
-    uniqs = set()
-    for mid in mols:
-        if mid in mol_active_genes:
-            for g in mol_active_genes[mid]: 
-                genes.append(g)
-            uniqs = uniqs | mol_active_genes[mid]
-    gene_counts = []
-    for g in uniqs:
-        gene_counts.append((genes.count(g), g))
-    gene_counts.sort(key=lambda x: (-x[0], x[1]))
-    return gene_counts
-
-
-
-def write_report_aggregated(mols, mol_active_genes, fname=None):
-    fil = None
-    if fname is not None:
-        fil = open(fname, "wt")
-
-    gene_counts = gene_counting(mols, mol_active_genes)
-    N = len(mols)
-    if N == 0:
-        if fil is not None:
-            fil.close()
-        return
-
-    for c, g in gene_counts:
-        if len(str(g).strip()) == 0:
-            continue
-        s = "%s\t%5d\t%6.4f" % (g, c, c/N)
-        if fname is None: 
-            print(s)
-        else:
-            fil.write(s + "\n")
-    if fil is not None:
-        fil.close()
-    
-
-def write_report_detail(mols, mol_active_genes, fname=None, append=False):
-    #this is where we detail for each molecule the potential genes
-    fmode = "wt"
-    suf = ""
-    if append == True: 
-        fmode = "at"
-        suf = "_"
-
-    fil = None
-    if fname is not None:
-        fil = open(fname, fmode)
-
-    for mid in mols:
-        s = "%s:" % (suf + mid)
-        if mid in mol_active_genes:
-            for g in sorted(mol_active_genes[mid]):
-                if len(str(g).strip()) > 0:
-                    s += "\t%s" % (g)
-        if fname is None: 
-            print(s)
-        else:
-            fil.write(s + "\n")
-        
-    if fil is not None:
-        fil.close()
-
-
-
-
-def make_reports(mols, mol_ids, mol_acts, targets, search="A", ofield="G"):
-    """
-     mols is  is a dictionary with the original as keys and with values including fp, inchikey and activity
-     mol_ids is a dictionary with the ick as key and value as the chembl_id
-     mol_acts is a dictionary with chemble mol_id and an array with all the activities for each chembl target
-             the activities are a dictionary with assay_id, target_id, assay_type, units, value, rel
-     targets are biological targets discovered: for each chembl target we have an array of biological targets. 
-     ofield is a string that can have [O]rganism or [G]ene or [U]niprot or all
-     This function returns for each molecule its active genes. Also a set of all targets used (chembl_ids)
-     For the moment I'm just going to process the elements with one Biological target
-        report specifies which report we will produce (A=Aggregated; D=Detailed)
-    """ 
-    good_targs = set()
-
-    act_filter = []        
-    if "A" in search:
-        act_filter.append("A")
-    if "U" in search:
-        act_filter.append("NA")
-    if "N" in search:
-        act_filter.append("N")
-    
-    mol_active_genes = {}
-    int_mol_ids = list(mols.keys())
-    for mid in int_mol_ids:
-        ick = mols[mid][1]
-        if ick in mol_ids: 
-            db_id = mol_ids[ick]
-            for act in mol_acts.get(db_id, []):
-                is_active = check_activity(act)
-                if is_active in act_filter:
-                    tid = act.get("target_id")
-                    if tid in targets: 
-                        #this is the constraint - we may change it in the future
-                        #here we are just processing the targets with ONE gene
-                        #if there is more than one, we will not consider them as the essay 
-                        #is not specific
-                        if len(targets[tid]) == 1:
-                            fs = []
-                            if "O" in ofield:
-                                fs.append(str(targets[tid][0][0]).upper()) #organism
-                            if "G" in ofield:
-                                fs.append(str(targets[tid][0][1]).upper()) #gene
-                            if "U" in ofield:
-                                fs.append(str(targets[tid][0][2]).upper()) #uniprot
-                            output = "_".join(fs)
-                            mol_active_genes.setdefault(mid, set()).add(output)
-                            good_targs.add((tid, output))
-
-    return mol_active_genes, good_targs
-
-
-
-def make_reports_x(mol_acts, targets, search="A", ofield="G"):
-    """
-     this is basically the same as make_reports, but simplified when only chembl molecules are being tested
-     this is the case when queries from similarities are being processed
-     mol_acts is a dictionary with chembl mol_id and an array with all the activities for each chembl target
-             the activities are a dictionary with assay_id, target_id, assay_type, units, value, rel
-     targets are biological targets discovered: for each chembl target we have an array of biological targets. 
-     This function returns for each molecule its active genes. Also a set of all targets used (chembl_ids)
-     For the moment I'm just going to process the elements with one Biological target
-    """
-    good_targs = set()
-    act_filter = []        
-    if "A" in search:
-        act_filter.append("A")
-    if "U" in search:
-        act_filter.append("NA")
-    if "N" in search:
-        act_filter.append("N")
-    
-    mol_active_genes = {}
-    for mid in mol_acts:
-        for act in mol_acts[mid]:
-            is_active = check_activity(act)
-            if is_active in act_filter:
-                tid = act.get("target_id")
-                if tid in targets: 
-                    #this is the constraint - we may change it in the future
-                    #here we are just processing the targets with ONE gene
-                    #if there is more than one, we will not consider them as the essay 
-                    #is not specific
-                    if len(targets[tid]) == 1:
-                        fs = []
-                        if "O" in ofield:
-                            fs.append(str(targets[tid][0][0]).upper()) #organism
-                        if "G" in ofield:
-                            fs.append(str(targets[tid][0][1]).upper()) #gene
-                        if "U" in ofield:
-                            fs.append(str(targets[tid][0][2]).upper()) #uniprot
-                        output = "_".join(fs)
-                        mol_active_genes.setdefault(mid, set()).add(output)
-                        good_targs.add((tid, output))
-    
-    return mol_active_genes, good_targs
 
 
 def get_sims(smiles, sim_thr=0.9, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
@@ -685,92 +819,54 @@ def get_all_sims(mols, thres, silent, chembl_server=DEFAULT_CHEMBL_SERVER):
     return set(sim_mols), sim_mols_detail
 
 
-def merge_T0T1(mols, mols_t0, mol_genes_T0, mols_t1, mol_genes_T1):
-    #mols is the original dic with keys with the original ID
-    #mols_T0 is a list with ick as key and the chembl_ids aqs value
-    #mol_genes_t0 is the gene data for each molecule of T0 found on Chem
-    #mols_t1 is a Dictionary with keys the input ids and values the similar chembl ids
-    # Deeply fixed (06/06/23) - probably a nasty bug/oversight
-    mol_genes_T01 = {}
-    for mid in mols:
-        genes = []
-        if mid in mol_genes_T0:
-            genes = list(mol_genes_T0[mid])
-        #if this molecule has chembl neighbours
-        if mid in mols_t1:
-            adjs = mols_t1[mid]
-            for a in adjs:
-                if a in mol_genes_T1:
-                    genes = genes + list(mol_genes_T1[a])
-        mol_genes_T01[mid] = set(genes)
-    #returns the genes referenced in T0 and T1, if any
-    return mol_genes_T01
-
-
-def merge_T1(mols, mols_t1, mol_genes_T1):
-    #returns only the genes referenced in T1, grouped by the original molecule id
-    mol_genes_T1_by_input = {}
-    for mid in mols:
-        genes = []
-        if mid in mols_t1:
-            adjs = mols_t1[mid]
-            for a in adjs:
-                if a in mol_genes_T1:
-                    genes = genes + list(mol_genes_T1[a])
-        mol_genes_T1_by_input[mid] = set(genes)
-    return mol_genes_T1_by_input
-
-
-def write_reports_for_channel(mols, mol_active_genes, report, fname_aggregate, fname_detail, write_files, to_screen):
-    if "A" in report:
-        if write_files == True:
-            write_report_aggregated(mols, mol_active_genes, fname=fname_aggregate)
-        if to_screen == True:
-            write_report_aggregated(mols, mol_active_genes, fname=None)
-
-    if "D" in report:
-        if write_files == True:
-            write_report_detail(mols, mol_active_genes, fname=fname_detail)
-        if to_screen == True:
-            write_report_detail(mols, mol_active_genes, fname=None)
 
 
 def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write_files=True, to_screen=False,
                          join_aggregates=False, silent=False, search="A", single_mol=None, ofield="G",
-                         chembl_server=DEFAULT_CHEMBL_SERVER):
-    """This is the main entry point.
-    fname - file name in .SAR format whith molecules to query
-    do_sims - flag that specifies whther or not we will do similarity search
-    thres - threshold for similarity search (0.7 - 1.0)
-    report - type of report (A - Aggregate; D Detail)
-    write_files - flag that indicates whether files are written
-    silent - flag that indicates whether the function verbosely explains what is doing
-    search - type of search (A- actives; N - non actives; U - unknowns)
-    single_mol - if only one molecule is being processed (SMILES or None)
+                         chembl_server=DEFAULT_CHEMBL_SERVER, rules_file=None, activity_rules=None,
+                         legacy_reports=False, report_format="markdown"):
+    reset_request_failures()
+    """Main entry point.
+
+    The default file output is now:
+       <root>_report.md     one readable Markdown report containing metadata, digest, glossary, and raw data
+       <root>_results.json  the same metadata/digest plus machine-readable raw results
+
+    Set report_format="text" to write <root>_report.txt instead.
+
+    Set legacy_reports=True from Python, or use -legacy_reports from the command
+    line, to also produce the old split aggregate/detail files.
     """
-    #this is the main function
-    #see if we have to create file names
-    full_aggregate = None
-    detail_A = None
+    if activity_rules is None:
+        activity_rules = load_activity_rules(rules_file=rules_file, silent=silent)
+
+    report_format, report_ext = normalise_report_format(report_format)
+
+    # Output names. The legacy names are still created only when legacy_reports=True.
     if write_files == True:
-        #requires a .sar extension for this to work properly
         if fname is not None:
-            root = fname.replace(".sar", "")
+            root = os.path.splitext(fname)[0]
         else:
             root = "csanno_single_mol"
+        report_file = root + "_report." + report_ext
+        report_json = root + "_results.json"
         detail_0 = root + "_annotations_T0.txt"
         detail_1 = root + "_annotations_T1.txt"
         detail_A = root + "_annotations_TA.txt"
         aggregate_0 = root + "_anno_count_T0.txt"
         aggregate_1 = root + "_anno_count_T1.txt"
         full_aggregate = root + "_anno_count_full.txt"
+        run_info_file = root + "_run_info.txt"
     else:
+        report_file = None
+        report_json = None
         detail_0 = None
         detail_1 = None
         detail_A = None
         aggregate_0 = None
         aggregate_1 = None
         full_aggregate = None
+        run_info_file = None
 
     if single_mol is not None:
         mols = make_mol(single_mol)
@@ -780,39 +876,66 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
         else:
             print("No input file! Nothing to do. Exiting")
             exit()
-       
+
+    metadata = build_run_metadata(csanno_version=version,
+                                  input_file=fname,
+                                  single_mol=single_mol,
+                                  mols=mols,
+                                  chembl_server=chembl_server,
+                                  do_sims=do_sims,
+                                  thres=thres,
+                                  search=search,
+                                  report=report,
+                                  ofield=ofield,
+                                  join_aggregates=join_aggregates,
+                                  activity_rules=activity_rules,
+                                  report_format=report_format)
+
+    if write_files == True and legacy_reports == True:
+        write_run_info(run_info_file,
+                       {"csanno_version": version,
+                        "activity_rules_version": activity_rules.get("activity_rules_version", "unknown"),
+                        "activity_rules_source": activity_rules.get("_source", "unknown"),
+                        "chembl_server": chembl_server,
+                        "input_file": fname,
+                        "single_molecule_mode": single_mol is not None,
+                        "molecule_count": len(mols),
+                        "similarity_search": do_sims,
+                        "similarity_threshold": thres,
+                        "search": search,
+                        "report": report,
+                        "ofield": ofield,
+                        "join_aggregates": join_aggregates,
+                        "readable_report": report_file,
+                        "json_report": report_json},
+                       silent=silent)
+
     mids = list(mols.keys())
     icks = []
-    smis = []
-    for mid in mids: 
+    for mid in mids:
         icks.append(mols[mid][1])
-        smis.append(mols[mid][0])
 
-    #
-    # this part will get the real molecules out of chembl
-
+    # Tier 0: exact matches in ChEMBL.
     mol_ids, mol_acts, targets = get_targets_info_chembl(icks, silent=silent, chembl_server=chembl_server)
 
-    mol_active_genes, target_ids = make_reports(mols, mol_ids, mol_acts, targets, search=search, ofield=ofield)
-    
-    if do_sims == True:
-        if "A" in report:
-            if write_files == True:
-                write_report_aggregated(mols, mol_active_genes, fname=aggregate_0)
-            if to_screen == True:
-                write_report_aggregated(mols, mol_active_genes, fname=None)
-    else:
-        write_reports_for_channel(mols, mol_active_genes, report, aggregate_0, detail_0, write_files, to_screen)
+    mol_active_genes, target_ids = make_reports(mols, mol_ids, mol_acts, targets, search=search, ofield=ofield,
+                                                activity_rules=activity_rules, activity_checker=check_activity)
 
-    #this part will extract the similar ones
-    #this is the eXtendeded search, thus the 'x'
-    #First get the similars for each molecule
+    if legacy_reports == True:
+        if do_sims == True:
+            if "A" in report and write_files == True:
+                write_report_aggregated(mols, mol_active_genes, fname=aggregate_0)
+        else:
+            write_reports_for_channel(mols, mol_active_genes, report, aggregate_0, detail_0,
+                                      write_files and legacy_reports, False)
+
+    # Tier 1: similar ChEMBL molecules.
     if do_sims == True:
         if not silent:
             print("Get the similars...", end=" ")
         sim_mols, sim_mols_detail = get_all_sims(mols, thres, silent, chembl_server=chembl_server)
-        
-        # extract the selfs (these were handed down before)
+
+        # Exclude exact/self matches already handled by Tier 0.
         sim_mols_x = sim_mols - set(mol_ids.values())
         if not silent:
             print("N. of similar molecules:", len(sim_mols_x))
@@ -820,57 +943,81 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
         sim_mols_x = list(sim_mols_x)
         mol_ids_x, mol_acts_x, targets_x = get_targets_info_chembl(sim_mols_x, "chemblids", silent=silent,
                                                                     chembl_server=chembl_server)
-        #mol_ids_x should be empty
-        #mol_acts_x should have the activities for each molecule
-        # targets, the info about the respective targets
-        #at this phase we know everything
-        
-        # Similarity reports are intended as evidence for molecules known to be active.
-        # Exact-match reports honour the user's -search option; the similarity layer remains active-only.
-        mol_active_genes_x, target_ids_x = make_reports_x(mol_acts_x, targets_x, search="A", ofield=ofield)
-        
-        if "A" in report and (write_files == True or to_screen == True):
-            if write_files == True:
-                write_report_aggregated(sim_mols_x, mol_active_genes_x, fname=aggregate_1)
-            if to_screen == True:
-                write_report_aggregated(sim_mols_x, mol_active_genes_x, fname=None)
+
+        # Similarity reports honour the same -search option as exact-match reports.
+        mol_active_genes_x, target_ids_x = make_reports_x(mol_acts_x, targets_x, search=search, ofield=ofield,
+                                                          activity_rules=activity_rules, activity_checker=check_activity)
+
+        if legacy_reports == True and "A" in report and write_files == True:
+            write_report_aggregated(sim_mols_x, mol_active_genes_x, fname=aggregate_1)
 
         genes_T1_by_input = merge_T1(mols, sim_mols_detail, mol_active_genes_x)
         genes_T01 = merge_T0T1(mols, mol_ids, mol_active_genes, sim_mols_detail, mol_active_genes_x)
-        
-        if "D" in report and (write_files == True or to_screen == True):
-            if write_files == True:
-                write_report_detail(mols, mol_active_genes, fname=detail_0)
-                write_report_detail(mols, genes_T1_by_input, fname=detail_1)
-            if to_screen == True:
-                write_report_detail(mols, mol_active_genes, fname=None)
-                write_report_detail(mols, genes_T1_by_input, fname=None)
 
-        if join_aggregates == True:
-            if "A" in report and (write_files == True or to_screen == True):
-                if write_files == True:
-                    write_report_aggregated(mols, genes_T01, fname=full_aggregate)
-                if to_screen == True:
-                    write_report_aggregated(mols, genes_T01, fname=None)
-            if "D" in report and (write_files == True or to_screen == True):
-                if write_files == True:
-                    write_report_detail(mols, genes_T01, fname=detail_A)
-                if to_screen == True:
-                    write_report_detail(mols, genes_T01, fname=None)
-    
-        return {"mols": mols, "active_genes": mol_active_genes, 
-                "mols_x": sim_mols_x, "active_genes_x": mol_active_genes_x, "target_ids": target_ids,
-                "target_ids_x": target_ids_x}
+        if legacy_reports == True and "D" in report and write_files == True:
+            write_report_detail(mols, mol_active_genes, fname=detail_0)
+            write_report_detail(mols, genes_T1_by_input, fname=detail_1)
+
+        if join_aggregates == True and legacy_reports == True:
+            if "A" in report and write_files == True:
+                write_report_aggregated(mols, genes_T01, fname=full_aggregate)
+            if "D" in report and write_files == True:
+                write_report_detail(mols, genes_T01, fname=detail_A)
+
+        rep = {"mols": mols,
+               "active_genes": mol_active_genes,
+               "mols_x": sim_mols_x,
+               "sim_mols_detail": sim_mols_detail,
+               "active_genes_x": mol_active_genes_x,
+               "active_genes_T1_by_input": genes_T1_by_input,
+               "active_genes_T01": genes_T01,
+               "target_ids": target_ids,
+               "target_ids_x": target_ids_x,
+               "targets": targets,
+               "targets_x": targets_x}
     else:
         if join_aggregates == True:
             warn("-joint_aggs was requested but -sim was not used; no joined similarity report created", silent)
-        
-        return {"mols": mols, "active_genes": mol_active_genes,
-                "mols_x": None, "active_genes_x": None, "target_ids": target_ids,
-                "target_ids_x": None}
-    
 
-    
+        rep = {"mols": mols,
+               "active_genes": mol_active_genes,
+               "mols_x": None,
+               "sim_mols_detail": None,
+               "active_genes_x": None,
+               "active_genes_T1_by_input": None,
+               "active_genes_T01": None,
+               "target_ids": target_ids,
+               "target_ids_x": None,
+               "targets": targets,
+               "targets_x": None}
+
+    request_summary = get_request_failure_summary()
+    if request_summary.get("count", 0) > 0:
+        metadata["request_warnings"] = request_summary
+        rep["request_warnings"] = request_summary
+    else:
+        metadata["request_warnings"] = {"count": 0, "by_status": {}, "by_endpoint": {}, "examples": []}
+        rep["request_warnings"] = metadata["request_warnings"]
+
+    rep["metadata"] = metadata
+    rep["output_files"] = {"readable_report": report_file, "json_report": report_json}
+
+    print_request_failure_summary(silent=silent)
+
+    if write_files == True or to_screen == True:
+        write_combined_report(rep, metadata,
+                              report_fname=report_file if write_files == True else None,
+                              json_fname=report_json if write_files == True else None,
+                              report=report,
+                              include_sims=do_sims,
+                              include_joined=join_aggregates,
+                              to_screen=to_screen,
+                              silent=silent,
+                              report_format=report_format)
+
+    return rep
+
+
 #def write_report_aggregated(mols, mol_active_genes, fname=None):    
 #def write_report_detail(mols, mol_active_genes, fname=None, append=False):
 
@@ -892,27 +1039,32 @@ Control parameters:
     -search [ANU] A - searches for actives in the database (default);
                   N - searches non-actives in exact ChEMBL matches; 
                   U - searches unknowns in exact ChEMBL matches;
-                  Similarity reports are still active-only evidence
+                  Similarity reports use the same search option
                   All options can be included simultaneously 
     -ofield [GUO] G - outputs the unique gene (default);
                   U - outputs the uniprot id;
                   O - outputs the organism;
                   All options can be included simultaneously
     -chembl_server URL - ChEMBL-compatible server [default: https://www.ebi.ac.uk]
+    -rules YAML_file - YAML file defining active/non-active/uncertain classification rules
 
 Output Control Options:
-    -joint_aggs - with -sim, produces joined T0+T1 aggregate and detail reports
+    By default, CSANNO writes one readable Markdown report (<root>_report.md) and one
+    JSON report (<root>_results.json) containing metadata, digest, glossary, and raw data.
+    -outfmt [markdown|text] - writes the readable report as .md (default) or .txt
+    -legacy_reports - also writes the old split T0/T1 aggregate/detail text files
+    -joint_aggs - with -sim and -legacy_reports, also produces joined T0+T1 legacy files
     -silent - no intermediate output at all
     -help - this screen
     -nofiles - no files are created
-    -toscreen - writes output to screen
+    -toscreen - writes the readable report to screen
     -pickle - writes a Python pickle for easy posterior analysis (see internal documentation)
 """
     print(version)
     print(s.strip())
     
 
-version = "CSANNO - (C) 2019/2026 - Andre O. Falcao DI/FCUL version 0.4.20260510"
+version = "CSANNO - (C) 2019/2026 - Andre O. Falcao BioISI - DI/FCUL version 0.5.20260510"
 if __name__ == "__main__":
     import sys
     import time
@@ -932,12 +1084,15 @@ if __name__ == "__main__":
     silent = False
     writepickle = False
     to_screen = False
+    legacy_reports = False
+    report_format = "markdown"
     mol = None
     input_file = None
     chembl_server = DEFAULT_CHEMBL_SERVER
+    rules_file = None
     
-    bin_args = ["-in", "-sim", "-search", "-report", "-mol", "-ofield", "-chembl_server"]
-    all_args = bin_args[:] + ["-silent", "-help", "--help", "-nofiles", "-pickle", "-joint_aggs", "-toscreen"]
+    bin_args = ["-in", "-sim", "-search", "-report", "-mol", "-ofield", "-chembl_server", "-rules", "-outfmt"]
+    all_args = bin_args[:] + ["-silent", "-help", "--help", "-nofiles", "-pickle", "-joint_aggs", "-toscreen", "-legacy_reports", "-legacy"]
 
     inp_fs = sys.argv
 
@@ -969,7 +1124,6 @@ if __name__ == "__main__":
             do_sims = True
         if '-mol' in input_args:
             mol = input_args["-mol"]
-            writefiles = False
             to_screen = True
             input_file = None  #if -mol we will ignore any input file
         if '-search' in input_args:
@@ -980,6 +1134,10 @@ if __name__ == "__main__":
             ofield = input_args["-ofield"]
         if '-chembl_server' in input_args:
             chembl_server = normalise_chembl_server(input_args["-chembl_server"])
+        if '-rules' in input_args:
+            rules_file = input_args["-rules"]
+        if '-outfmt' in input_args:
+            report_format = normalise_report_format(input_args["-outfmt"])[0]
         
         if '-nofiles' in inp_fs:
             writefiles = False
@@ -991,6 +1149,8 @@ if __name__ == "__main__":
             writepickle = True
         if '-joint_aggs' in inp_fs:
             joint_aggs = True
+        if '-legacy_reports' in inp_fs or '-legacy' in inp_fs:
+            legacy_reports = True
         
     except Exception as exc:
         print("Illegal Option or Value. Exiting")
@@ -1028,7 +1188,8 @@ if __name__ == "__main__":
         rep = get_activity_profile(fname=input_file, do_sims=do_sims, thres=sim_thr, report=report,
                                    search=search, join_aggregates=joint_aggs, write_files=writefiles,
                                    to_screen=to_screen, silent=silent, single_mol=mol, ofield=ofield,
-                                   chembl_server=chembl_server)
+                                   chembl_server=chembl_server, rules_file=rules_file,
+                                   legacy_reports=legacy_reports, report_format=report_format)
 
         if writepickle == True:
             if input_file is not None:
