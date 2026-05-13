@@ -1,0 +1,12 @@
+Risperidone	NA	CC1=C(C(=O)N2CCCCC2=N1)CCN3CCC(CC3)C4=NOC5=C4C=CC(=C5)F
+Olanzapine	NA	CC1=CC2=C(S1)NC3=CC=CC=C3N=C2N4CCN(CC4)C
+Quetiapine	NA	N\1=C(\c3c(Sc2c/1cccc2)cccc3)N4CCN(CCOCCO)CC4
+Aripiprazole	NA	C1CC(=O)NC2=C1C=CC(=C2)OCCCCN3CCN(CC3)C4=C(C(=CC=C4)Cl)Cl
+Haloperidol	NA	c1cc(ccc1C(=O)CCCN2CCC(CC2)(c3ccc(cc3)Cl)O)F
+Chlorpromazine	NA	CN(C)CCCN1C2=CC=CC=C2SC3=C1C=C(C=C3)Cl
+Clozapine	NA	CN1CCN(CC1)C1=Nc2cc(Cl)ccc2Nc2c1cccc2
+Ziprasidone	NA	O=C1Nc2c(C1)cc(c(c2)Cl)CCN1CCN(CC1)c1nsc2c1cccc2
+Paliperidone	NA	CC1=C(C(=O)N2CCCC(C2=N1)O)CCN3CCC(CC3)C4=NOC5=C4C=CC(=C5)F
+Lurasidone	NA	C1CCC(C(C1)CN2CCN(CC2)C3=NSC4=CC=CC=C43)CN5C(=O)C6C7CCC(C7)C6C5=O
+Brexpiprazole	NA	O=C5/C=C\c4ccc(OCCCCN3CCN(c1cccc2sccc12)CC3)cc4N5
+Cariprazine	NA	CN(C)C(=O)N[C@H]1CC[C@H](CCN2CCN(CC2)c2cccc(Cl)c2Cl)CC1

@@ -1,0 +1,14 @@
+Amlodipine	NA	CCOC(=O)C1=C(NC(=C(C1C2=CC=CC=C2Cl)C(=O)OC)C)COCCN
+Lisinopril	NA	C1C[C@H](N(C1)C(=O)[C@H](CCCCN)N[C@@H](CCC2=CC=CC=C2)C(=O)O)C(=O)O
+Losartan	NA	CCCCC1=NC(=C(N1CC2=CC=C(C=C2)C3=CC=CC=C3C4=NNN=N4)CO)Cl
+Valsartan	NA	CCCCC(=O)N(Cc1ccc(-c2ccccc2-c2nn[nH]n2)cc1)C(C(=O)O)C(C)C
+Hydrochlorothiazide	NA	O=S(=O)(N)c1c(Cl)cc2c(c1)S(=O)(=O)NCN2
+Chlorthalidone	NA	O=S(=O)(N)c1c(Cl)ccc(c1)C2(O)c3ccccc3C(=O)N2
+Metoprolol	NA	CC(C)NCC(COC1=CC=C(C=C1)CCOC)O
+Atenolol	NA	CC(C)NCC(COC1=CC=C(C=C1)CC(=O)N)O
+Propranolol	NA	CC(C)NCC(COC1=CC=CC2=CC=CC=C21)O
+Carvedilol	NA	COC1=CC=CC=C1OCCNCC(COC2=CC=CC3=C2C4=CC=CC=C4N3)O
+Diltiazem	NA	COc1ccc(cc1)[C@@H]1Sc2ccccc2N(C(=O)[C@@H]1OC(=O)C)CCN(C)C
+Verapamil	NA	COc1ccc(cc1OC)CCN(CCCC(c1ccc(c(c1)OC)OC)(C(C)C)C#N)C
+Hydralazine	NA	C1=CC=C2C(=C1)C=NN=C2NN
+Clonidine	NA	C1CN=C(N1)NC2=C(C=CC=C2Cl)Cl
