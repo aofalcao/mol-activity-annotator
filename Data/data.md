@@ -14,9 +14,11 @@ SAR files are text files that should store activity data for a given target for 
 Here is a sample SAR file, where the identifiers are the ChEMBL IDs, the middle column is the default "unknown" or irrelevant ($NA$) and the 3rd column the corresponding SMILES
 
 ```
-CHEMBL158973	NA	CN(C)CCSC(C)(C)C
-CHEMBL476516	NA	NCCc1ccc(Br)cc1
-CHEMBL309689	NA	Oc1noc2c1CCNCC2
+Sertraline	NA	ClC1=CC=C([C@H]2C3=C([C@H](CC2)NC)C=CC=C3)C=C1Cl
+Citalopran	NA	Fc1ccc(cc1)C3(OCc2cc(C#N)ccc23)CCCN(C)C
+Fluoxetine	NA	CNCCC(c1ccccc1)Oc2ccc(cc2)C(F)(F)F
+Tradozone	NA	Clc4cccc(N3CCN(CCCN1/N=C2/C=C\C=C/N2C1=O)CC3)c4
+Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 ```
 
 
