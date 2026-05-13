@@ -1,0 +1,81 @@
+# CSANNO default activity classification rules
+#
+# These rules reproduce the historical CSANNO check_activity() behaviour,
+# except that pKi and pIC50 use the corrected direction: higher p-values
+# indicate stronger activity.
+#
+# Returned classes:
+#   A  = active / positive evidence
+#   N  = non-active / negative evidence
+#   NA = uncertain, unsupported, or not classifiable
+#
+# The rules are intentionally explicit and do not use executable expressions.
+
+activity_rules_version: csanno-default-0.5
+profile_name: CSANNO default activity rules
+profile_description: Historical CSANNO thresholds with corrected pKi/pIC50 direction.
+default_result: NA
+missing_relation_default: "="
+allowed_results: [A, N, NA]
+
+unit_multipliers:
+  nM: 1
+  uM: 1000
+  µM: 1000
+  mM: 1000000
+
+rules:
+  - name: low_concentration_activity
+    standard_types: [Ki, IC50, Kd, EC50, AC50, Potency]
+    value_field: value
+    units_field: units
+    relation_field: rel
+    unit_conversion: true
+    converted_unit: nM
+    missing_value_result: N
+    missing_units_result: NA
+    unsupported_relation_result: NA
+    relations:
+      "=":  {operator: "<", threshold: 10000, true_result: A,  false_result: N}
+      ">":  {operator: "<", threshold: 10000, true_result: NA, false_result: N}
+      ">=": {operator: "<", threshold: 10000, true_result: NA, false_result: N}
+      "<":  {operator: "<", threshold: 10000, true_result: A,  false_result: NA}
+      "<=": {operator: "<", threshold: 10000, true_result: A,  false_result: NA}
+
+  - name: inhibition_positive_response
+    standard_types: [INH, Inhibition]
+    value_field: value
+    relation_field: rel
+    missing_value_result: N
+    unsupported_relation_result: NA
+    relations:
+      "=":  {operator: ">", threshold: 0, true_result: A,  false_result: N}
+      ">":  {operator: ">", threshold: 0, true_result: A,  false_result: N}
+      ">=": {operator: ">", threshold: 0, true_result: A,  false_result: N}
+      "<":  {operator: ">", threshold: 0, true_result: NA, false_result: N}
+      "<=": {operator: ">", threshold: 0, true_result: NA, false_result: N}
+
+  - name: p_activity_high_value_active
+    standard_types: [pKi, pIC50]
+    value_field: value
+    relation_field: rel
+    missing_value_result: N
+    unsupported_relation_result: NA
+    relations:
+      "=":  {operator: ">", threshold: 5.0, true_result: A,  false_result: N}
+      ">":  {operator: ">", threshold: 5.0, true_result: A,  false_result: NA}
+      ">=": {operator: ">", threshold: 5.0, true_result: A,  false_result: NA}
+      "<":  {operator: ">", threshold: 5.0, true_result: NA, false_result: N}
+      "<=": {operator: ">", threshold: 5.0, true_result: NA, false_result: N}
+
+  - name: generic_activity_positive_response
+    standard_types: [Activity]
+    value_field: value
+    units_field: units
+    relation_field: rel
+    units_allowed: ["&"]
+    result_if_unit_mismatch: NA
+    missing_value_result: N
+    unsupported_relation_result: NA
+    relations:
+      "=": {operator: ">", threshold: 0, true_result: A, false_result: N}
