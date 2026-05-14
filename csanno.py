@@ -824,7 +824,8 @@ def get_all_sims(mols, thres, silent, chembl_server=DEFAULT_CHEMBL_SERVER):
 def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write_files=True, to_screen=False,
                          join_aggregates=False, silent=False, search="A", single_mol=None, ofield="G",
                          chembl_server=DEFAULT_CHEMBL_SERVER, rules_file=None, activity_rules=None,
-                         legacy_reports=False, report_format="markdown"):
+                         legacy_reports=False, report_format="markdown", include_glossary=True, include_digest=True,
+                         out_file=None):
     reset_request_failures()
     """Main entry point.
 
@@ -844,10 +845,11 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
 
     # Output names. The legacy names are still created only when legacy_reports=True.
     if write_files == True:
-        if fname is not None:
-            root = os.path.splitext(fname)[0]
-        else:
-            root = "csanno_single_mol"
+        #if fname is not None:
+        #    root = os.path.splitext(fname)[0]
+        #else:
+        #    root = "csanno_single_mol"
+        root = out_file    
         report_file = root + "_report." + report_ext
         report_json = root + "_results.json"
         detail_0 = root + "_annotations_T0.txt"
@@ -1013,7 +1015,8 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
                               include_joined=join_aggregates,
                               to_screen=to_screen,
                               silent=silent,
-                              report_format=report_format)
+                              report_format=report_format,
+                              include_glossary=include_glossary, include_digest=include_digest)
 
     return rep
 
@@ -1033,6 +1036,7 @@ Control parameters:
     -sim thr - similarity threshold [if absent (default) no similarity search will be performed]
     -mol [molecule in SMILES format] - molecule for which analysis is going to be performed.  
          Incompatible with -in option
+    -out file_name - output file name [by default will append to the input file name]
     -report [AD]: A - aggregate report;
                   D - Detailed report (one line for each molecule)
                   Both options simultaneously are permitted and both reports are produced
@@ -1088,11 +1092,15 @@ if __name__ == "__main__":
     report_format = "markdown"
     mol = None
     input_file = None
+    out_file = None
     chembl_server = DEFAULT_CHEMBL_SERVER
     rules_file = None
+    digest=False
+    glossary=False
     
-    bin_args = ["-in", "-sim", "-search", "-report", "-mol", "-ofield", "-chembl_server", "-rules", "-outfmt"]
-    all_args = bin_args[:] + ["-silent", "-help", "--help", "-nofiles", "-pickle", "-joint_aggs", "-toscreen", "-legacy_reports", "-legacy"]
+    bin_args = ["-in", "-sim", "-search", "-report", "-mol", "-ofield", "-chembl_server", "-rules", "-outfmt", "-out"]
+    all_args = bin_args[:] + ["-silent", "-help", "--help", "-nofiles", "-pickle", "-joint_aggs", 
+                              "-toscreen", "-legacy_reports", "-legacy", "-digest", "-glossary"]
 
     inp_fs = sys.argv
 
@@ -1138,6 +1146,10 @@ if __name__ == "__main__":
             rules_file = input_args["-rules"]
         if '-outfmt' in input_args:
             report_format = normalise_report_format(input_args["-outfmt"])[0]
+        if '-out' in input_args:
+            out_file = input_args["-out"]
+            writefiles = True
+            to_screen = False
         
         if '-nofiles' in inp_fs:
             writefiles = False
@@ -1151,6 +1163,10 @@ if __name__ == "__main__":
             joint_aggs = True
         if '-legacy_reports' in inp_fs or '-legacy' in inp_fs:
             legacy_reports = True
+        if '-digest' in inp_fs: 
+            digest = True
+        if '-glossary' in inp_fs: 
+            glossary = True
         
     except Exception as exc:
         print("Illegal Option or Value. Exiting")
@@ -1182,14 +1198,22 @@ if __name__ == "__main__":
         print("No files and no screen output. Nothing to see! Exiting")
         exit()
 
+
+    if out_file is None:
+        if input_file is not None: out_file = os.path.splitext(input_file)[0]
+        else: out_file = "csanno_single_mol"
+            
     try:
         if not silent:
             print(version)
+
         rep = get_activity_profile(fname=input_file, do_sims=do_sims, thres=sim_thr, report=report,
                                    search=search, join_aggregates=joint_aggs, write_files=writefiles,
                                    to_screen=to_screen, silent=silent, single_mol=mol, ofield=ofield,
                                    chembl_server=chembl_server, rules_file=rules_file,
-                                   legacy_reports=legacy_reports, report_format=report_format)
+                                   legacy_reports=legacy_reports, report_format=report_format, 
+                                   include_glossary=glossary, include_digest=digest,
+                                   out_file=out_file)
 
         if writepickle == True:
             if input_file is not None:
