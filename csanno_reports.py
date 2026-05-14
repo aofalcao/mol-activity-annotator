@@ -813,7 +813,8 @@ def build_gene_glossary(target_metadata, sections, cache_file=DEFAULT_GLOSSARY_C
 
 
 def build_report_payload(results, metadata, report="A", include_sims=False, include_joined=False,
-                         include_glossary=True, glossary_cache_file=DEFAULT_GLOSSARY_CACHE_JSON):
+                         include_glossary=True, include_digest=True, 
+                         glossary_cache_file=DEFAULT_GLOSSARY_CACHE_JSON):
     """Build a structured report payload before rendering text/Markdown/JSON."""
     results = results or {}
     metadata = dict(metadata or {})
@@ -881,14 +882,16 @@ def build_report_payload(results, metadata, report="A", include_sims=False, incl
 
     lang = _evidence_language(search)
     t0_stats = _detail_stats(t0_detail)
-    digest = {
-        "evidence_language": lang,
-        "tier0": {
-            "stats": t0_stats,
-            "top_targets": _top_targets(t0_agg, 10),
-        },
-        "tier1": None,
-    }
+    if include_digest:
+        digest = {
+            "evidence_language": lang,
+            "tier0": {
+                "stats": t0_stats,
+                "top_targets": _top_targets(t0_agg, 10),
+            },
+            "tier1": None,
+        }
+    else: digest={}
 
     if tier1 is not None:
         t1_stats = _detail_stats(tier1["by_input_detail"])
@@ -896,13 +899,14 @@ def build_report_payload(results, metadata, report="A", include_sims=False, incl
         analogue_stats = _detail_stats(analogue_rows)
         t0_targets = set(row["target"] for row in t0_agg)
         t1_targets = set(row["target"] for row in tier1["by_input_aggregate"])
-        digest["tier1"] = {
-            "stats_by_input": t1_stats,
-            "stats_by_analogue_pool": analogue_stats,
-            "top_probable_targets_by_input": _top_targets(tier1["by_input_aggregate"], 10),
-            "top_targets_in_analogue_pool": _top_targets(tier1["analogue_pool_aggregate"], 10),
-            "new_targets_vs_tier0": sorted(t1_targets - t0_targets),
-        }
+        if include_digest:
+            digest["tier1"] = {
+                "stats_by_input": t1_stats,
+                "stats_by_analogue_pool": analogue_stats,
+                "top_probable_targets_by_input": _top_targets(tier1["by_input_aggregate"], 10),
+                "top_targets_in_analogue_pool": _top_targets(tier1["analogue_pool_aggregate"], 10),
+                "new_targets_vs_tier0": sorted(t1_targets - t0_targets),
+            }
 
     target_metadata = build_target_metadata(results)
     glossary = build_gene_glossary(target_metadata, sections, cache_file=glossary_cache_file) if include_glossary else []
@@ -953,15 +957,19 @@ def _render_text_glossary(glossary):
     return lines
 
 
-def render_text_report(payload):
+def render_text_report(payload, include_digest=True, include_glossary=True):
     metadata = payload.get("metadata", {})
-    digest = payload.get("digest", {})
-    lang = digest.get("evidence_language", _evidence_language("A"))
+    if include_digest:
+        digest = payload.get("digest", {})
+        lang = digest.get("evidence_language", _evidence_language("A"))
+    else:
+        lang = _evidence_language("A")
+        
     source = metadata.get("source", {})
 
     lines = []
-    lines.append("CSANNO readable report")
-    lines.append("======================")
+    lines.append("CSANNO  report")
+    lines.append("==============")
     lines.append("")
     lines.append("Metadata")
     lines.append("--------")
@@ -975,83 +983,13 @@ def render_text_report(payload):
     lines.append("ChEMBL server: %s" % metadata.get("chembl_server", "unknown"))
     lines.append("ChEMBL request warnings: %s" % _format_request_warning_summary(metadata))
     lines.append("")
-    lines.append("CSANNO options, in English")
+    lines.append("CSANNO options")
     lines.append("--------------------------")
     for explanation in metadata.get("options_explained", []):
         lines.append("- " + explanation)
     lines.append("")
-    lines.append("Comprehensive digest")
-    lines.append("--------------------")
 
-    t0 = digest.get("tier0", {})
-    t0_stats = t0.get("stats", {})
-    n0 = t0_stats.get("molecule_count", 0)
-    lines.append(
-        "Tier 0 (%s): %d/%d input molecules had at least one %s. "
-        "The median was %.1f annotations per molecule, with a maximum of %d."
-        % (
-            lang.get("tier0_action", "direct evidence"),
-            t0_stats.get("molecules_with_annotations", 0),
-            n0,
-            lang.get("annotation_phrase", "annotation"),
-            t0_stats.get("median_annotations_per_molecule", 0.0),
-            t0_stats.get("max_annotations_per_molecule", 0),
-        )
-    )
-    lines.append(
-        "Tier 0 %s: %s."
-        % (lang.get("breadth_name", "annotation breadth"), _render_top_molecules(t0_stats.get("most_annotated_molecules", [])))
-    )
-    lines.append(
-        "Tier 0 %s: %s."
-        % (lang.get("common_t0", "most frequent annotations"), _render_top_targets(t0.get("top_targets", []), "input molecules"))
-    )
-
-    t1 = digest.get("tier1")
-    if t1 is None:
-        lines.append("Tier 1: not run; no similarity search was requested.")
-    else:
-        t1_input = t1.get("stats_by_input", {})
-        t1_pool = t1.get("stats_by_analogue_pool", {})
-        lines.append(
-            "Tier 1 (%s): %d similar ChEMBL molecules were evaluated; %d of them had at least one %s."
-            % (
-                lang.get("tier1_action", "analogue evidence"),
-                t1_pool.get("molecule_count", 0),
-                t1_pool.get("molecules_with_annotations", 0),
-                lang.get("annotation_phrase", "annotation"),
-            )
-        )
-        lines.append(
-            "Grouped back to the input file, %d/%d input molecules had at least one Tier 1 %s; "
-            "the median was %.1f annotations per molecule."
-            % (
-                t1_input.get("molecules_with_annotations", 0),
-                t1_input.get("molecule_count", 0),
-                lang.get("annotation_phrase", "annotation"),
-                t1_input.get("median_annotations_per_molecule", 0.0),
-            )
-        )
-        lines.append(
-            "Tier 1 %s by input molecule: %s."
-            % (lang.get("common_t1", "frequent analogue-derived annotations"), _render_top_targets(t1.get("top_probable_targets_by_input", []), "input molecules"))
-        )
-        lines.append(
-            "Tier 1 strongest signals in the analogue pool: %s."
-            % _render_top_targets(t1.get("top_targets_in_analogue_pool", []), "similar molecules")
-        )
-        new_targets = t1.get("new_targets_vs_tier0", [])
-        if new_targets:
-            lines.append(
-                "Tier 1 annotations not seen in Tier 0: %s."
-                % ", ".join(new_targets[:25])
-                + (" ..." if len(new_targets) > 25 else "")
-            )
-        lines.append(lang.get("tier1_note", ""))
-
-    lines.append("")
-    lines.extend(_render_text_glossary(payload.get("glossary", [])))
-
+    
     lines.append("")
     lines.append("Raw data")
     lines.append("--------")
@@ -1074,6 +1012,86 @@ def render_text_report(payload):
                 lines.append("No molecules found.")
 
     lines.append("")
+
+
+    #the DIGEST
+    
+    
+    if include_digest:
+        lines.append("Comprehensive digest")
+        lines.append("--------------------")
+    
+        t0 = digest.get("tier0", {})
+        t0_stats = t0.get("stats", {})
+        n0 = t0_stats.get("molecule_count", 0)
+        lines.append(
+            "Tier 0 (%s): %d/%d input molecules had at least one %s. "
+            "The median was %.1f annotations per molecule, with a maximum of %d."
+            % (
+                lang.get("tier0_action", "direct evidence"),
+                t0_stats.get("molecules_with_annotations", 0),
+                n0,
+                lang.get("annotation_phrase", "annotation"),
+                t0_stats.get("median_annotations_per_molecule", 0.0),
+                t0_stats.get("max_annotations_per_molecule", 0),
+            )
+        )
+        lines.append(
+            "Tier 0 %s: %s."
+            % (lang.get("breadth_name", "annotation breadth"), _render_top_molecules(t0_stats.get("most_annotated_molecules", [])))
+        )
+        lines.append(
+            "Tier 0 %s: %s."
+            % (lang.get("common_t0", "most frequent annotations"), _render_top_targets(t0.get("top_targets", []), "input molecules"))
+        )
+    
+        t1 = digest.get("tier1")
+        if t1 is None:
+            lines.append("Tier 1: not run; no similarity search was requested.")
+        else:
+            t1_input = t1.get("stats_by_input", {})
+            t1_pool = t1.get("stats_by_analogue_pool", {})
+            lines.append(
+                "Tier 1 (%s): %d similar ChEMBL molecules were evaluated; %d of them had at least one %s."
+                % (
+                    lang.get("tier1_action", "analogue evidence"),
+                    t1_pool.get("molecule_count", 0),
+                    t1_pool.get("molecules_with_annotations", 0),
+                    lang.get("annotation_phrase", "annotation"),
+                )
+            )
+            lines.append(
+                "Grouped back to the input file, %d/%d input molecules had at least one Tier 1 %s; "
+                "the median was %.1f annotations per molecule."
+                % (
+                    t1_input.get("molecules_with_annotations", 0),
+                    t1_input.get("molecule_count", 0),
+                    lang.get("annotation_phrase", "annotation"),
+                    t1_input.get("median_annotations_per_molecule", 0.0),
+                )
+            )
+            lines.append(
+                "Tier 1 %s by input molecule: %s."
+                % (lang.get("common_t1", "frequent analogue-derived annotations"), _render_top_targets(t1.get("top_probable_targets_by_input", []), "input molecules"))
+            )
+            lines.append(
+                "Tier 1 strongest signals in the analogue pool: %s."
+                % _render_top_targets(t1.get("top_targets_in_analogue_pool", []), "similar molecules")
+            )
+            new_targets = t1.get("new_targets_vs_tier0", [])
+            if new_targets:
+                lines.append(
+                    "Tier 1 annotations not seen in Tier 0: %s."
+                    % ", ".join(new_targets[:25])
+                    + (" ..." if len(new_targets) > 25 else "")
+                )
+            lines.append(lang.get("tier1_note", ""))
+    
+        lines.append("")
+
+    if include_glossary: lines.extend(_render_text_glossary(payload.get("glossary", [])))
+
+    
     return "\n".join(lines)
 
 
@@ -1126,10 +1144,15 @@ def _render_markdown_table(headers, rows):
     return lines
 
 
-def render_markdown_report(payload):
+def render_markdown_report(payload, include_digest=True, include_glossary=True):
     metadata = payload.get("metadata", {})
-    digest = payload.get("digest", {})
-    lang = digest.get("evidence_language", _evidence_language("A"))
+    if include_digest:
+        digest = payload.get("digest", {})
+        lang = digest.get("evidence_language", _evidence_language("A"))
+    else:
+        digest=None
+        lang =_evidence_language("A")
+        
     source = metadata.get("source", {})
 
     lines = []
@@ -1148,90 +1171,11 @@ def render_markdown_report(payload):
     lines.extend(_render_markdown_table(["Field", "Value"], metadata_rows))
     lines.append("")
 
-    lines.append("## CSANNO options, in English")
+    lines.append("## CSANNO options")
     lines.append("")
     for explanation in metadata.get("options_explained", []):
         lines.append("- " + _escape_md(explanation))
     lines.append("")
-
-    lines.append("## Comprehensive digest")
-    lines.append("")
-    t0 = digest.get("tier0", {})
-    t0_stats = t0.get("stats", {})
-    n0 = t0_stats.get("molecule_count", 0)
-    lines.append(
-        "**Tier 0 (%s).** %d/%d input molecules had at least one %s. "
-        "The median was %.1f annotations per molecule, with a maximum of %d."
-        % (
-            _escape_md(lang.get("tier0_action", "direct evidence")),
-            t0_stats.get("molecules_with_annotations", 0),
-            n0,
-            _escape_md(lang.get("annotation_phrase", "annotation")),
-            t0_stats.get("median_annotations_per_molecule", 0.0),
-            t0_stats.get("max_annotations_per_molecule", 0),
-        )
-    )
-    lines.append("")
-    lines.append(
-        "**Tier 0 %s:** %s."
-        % (_escape_md(lang.get("breadth_name", "annotation breadth")), _escape_md(_render_top_molecules(t0_stats.get("most_annotated_molecules", []))))
-    )
-    lines.append("")
-    lines.append(
-        "**Tier 0 %s:** %s."
-        % (_escape_md(lang.get("common_t0", "most frequent annotations")), _render_md_top_targets(t0.get("top_targets", []), "input molecules"))
-    )
-    lines.append("")
-
-    t1 = digest.get("tier1")
-    if t1 is None:
-        lines.append("**Tier 1:** not run; no similarity search was requested.")
-        lines.append("")
-    else:
-        t1_input = t1.get("stats_by_input", {})
-        t1_pool = t1.get("stats_by_analogue_pool", {})
-        lines.append(
-            "**Tier 1 (%s).** %d similar ChEMBL molecules were evaluated; %d of them had at least one %s."
-            % (
-                _escape_md(lang.get("tier1_action", "analogue evidence")),
-                t1_pool.get("molecule_count", 0),
-                t1_pool.get("molecules_with_annotations", 0),
-                _escape_md(lang.get("annotation_phrase", "annotation")),
-            )
-        )
-        lines.append("")
-        lines.append(
-            "Grouped back to the input file, %d/%d input molecules had at least one Tier 1 %s; "
-            "the median was %.1f annotations per molecule."
-            % (
-                t1_input.get("molecules_with_annotations", 0),
-                t1_input.get("molecule_count", 0),
-                _escape_md(lang.get("annotation_phrase", "annotation")),
-                t1_input.get("median_annotations_per_molecule", 0.0),
-            )
-        )
-        lines.append("")
-        lines.append(
-            "**Tier 1 %s by input molecule:** %s."
-            % (_escape_md(lang.get("common_t1", "frequent analogue-derived annotations")), _render_md_top_targets(t1.get("top_probable_targets_by_input", []), "input molecules"))
-        )
-        lines.append("")
-        lines.append(
-            "**Tier 1 strongest signals in the analogue pool:** %s."
-            % _render_md_top_targets(t1.get("top_targets_in_analogue_pool", []), "similar molecules")
-        )
-        lines.append("")
-        new_targets = t1.get("new_targets_vs_tier0", [])
-        if new_targets:
-            lines.append(
-                "**Tier 1 annotations not seen in Tier 0:** %s."
-                % _escape_md(", ".join(new_targets[:25]) + (" ..." if len(new_targets) > 25 else ""))
-            )
-            lines.append("")
-        lines.append(_escape_md(lang.get("tier1_note", "")))
-        lines.append("")
-
-    lines.extend(_render_md_glossary(payload.get("glossary", [])))
 
     lines.append("## Raw data")
     lines.append("")
@@ -1254,6 +1198,87 @@ def render_markdown_report(payload):
                 lines.append("No molecules found.")
         lines.append("")
 
+    #the digest
+    if include_digest:
+        lines.append("## Comprehensive digest")
+        lines.append("")
+        t0 = digest.get("tier0", {})
+        t0_stats = t0.get("stats", {})
+        n0 = t0_stats.get("molecule_count", 0)
+        lines.append(
+            "**Tier 0 (%s).** %d/%d input molecules had at least one %s. "
+            "The median was %.1f annotations per molecule, with a maximum of %d."
+            % (
+                _escape_md(lang.get("tier0_action", "direct evidence")),
+                t0_stats.get("molecules_with_annotations", 0),
+                n0,
+                _escape_md(lang.get("annotation_phrase", "annotation")),
+                t0_stats.get("median_annotations_per_molecule", 0.0),
+                t0_stats.get("max_annotations_per_molecule", 0),
+            )
+        )
+        lines.append("")
+        lines.append(
+            "**Tier 0 %s:** %s."
+            % (_escape_md(lang.get("breadth_name", "annotation breadth")), _escape_md(_render_top_molecules(t0_stats.get("most_annotated_molecules", []))))
+        )
+        lines.append("")
+        lines.append(
+            "**Tier 0 %s:** %s."
+            % (_escape_md(lang.get("common_t0", "most frequent annotations")), _render_md_top_targets(t0.get("top_targets", []), "input molecules"))
+        )
+        lines.append("")
+    
+        t1 = digest.get("tier1")
+        if t1 is None:
+            lines.append("**Tier 1:** not run; no similarity search was requested.")
+            lines.append("")
+        else:
+            t1_input = t1.get("stats_by_input", {})
+            t1_pool = t1.get("stats_by_analogue_pool", {})
+            lines.append(
+                "**Tier 1 (%s).** %d similar ChEMBL molecules were evaluated; %d of them had at least one %s."
+                % (
+                    _escape_md(lang.get("tier1_action", "analogue evidence")),
+                    t1_pool.get("molecule_count", 0),
+                    t1_pool.get("molecules_with_annotations", 0),
+                    _escape_md(lang.get("annotation_phrase", "annotation")),
+                )
+            )
+            lines.append("")
+            lines.append(
+                "Grouped back to the input file, %d/%d input molecules had at least one Tier 1 %s; "
+                "the median was %.1f annotations per molecule."
+                % (
+                    t1_input.get("molecules_with_annotations", 0),
+                    t1_input.get("molecule_count", 0),
+                    _escape_md(lang.get("annotation_phrase", "annotation")),
+                    t1_input.get("median_annotations_per_molecule", 0.0),
+                )
+            )
+            lines.append("")
+            lines.append(
+                "**Tier 1 %s by input molecule:** %s."
+                % (_escape_md(lang.get("common_t1", "frequent analogue-derived annotations")), _render_md_top_targets(t1.get("top_probable_targets_by_input", []), "input molecules"))
+            )
+            lines.append("")
+            lines.append(
+                "**Tier 1 strongest signals in the analogue pool:** %s."
+                % _render_md_top_targets(t1.get("top_targets_in_analogue_pool", []), "similar molecules")
+            )
+            lines.append("")
+            new_targets = t1.get("new_targets_vs_tier0", [])
+            if new_targets:
+                lines.append(
+                    "**Tier 1 annotations not seen in Tier 0:** %s."
+                    % _escape_md(", ".join(new_targets[:25]) + (" ..." if len(new_targets) > 25 else ""))
+                )
+                lines.append("")
+            lines.append(_escape_md(lang.get("tier1_note", "")))
+            lines.append("")
+
+    if include_glossary: lines.extend(_render_md_glossary(payload.get("glossary", [])))
+    
     return "\n".join(lines)
 
 
@@ -1263,7 +1288,7 @@ def render_markdown_report(payload):
 
 def write_combined_report(results, metadata, report_fname=None, json_fname=None, report="A",
                           include_sims=False, include_joined=False, to_screen=False, silent=False,
-                          report_format="markdown", txt_fname=None,
+                          report_format="markdown", txt_fname=None, include_glossary=True, include_digest=True,
                           glossary_cache_file=DEFAULT_GLOSSARY_CACHE_JSON):
     """Write the combined report and JSON payload. Returns (rendered_report, payload)."""
     fmt_name, _ = normalise_report_format(report_format)
@@ -1272,12 +1297,13 @@ def write_combined_report(results, metadata, report_fname=None, json_fname=None,
         report_fname = txt_fname
 
     payload = build_report_payload(results, metadata, report=report, include_sims=include_sims,
-                                   include_joined=include_joined, include_glossary=True,
+                                   include_joined=include_joined, include_glossary=include_glossary, 
+                                   include_digest=include_digest,
                                    glossary_cache_file=glossary_cache_file)
     if fmt_name == "markdown":
-        rendered = render_markdown_report(payload)
+        rendered = render_markdown_report(payload, include_digest=include_digest, include_glossary=include_glossary)
     else:
-        rendered = render_text_report(payload)
+        rendered = render_text_report(payload, include_digest=include_digest, include_glossary=include_glossary)
 
     if report_fname is not None:
         with open(report_fname, "wt", encoding="utf8") as fil:
