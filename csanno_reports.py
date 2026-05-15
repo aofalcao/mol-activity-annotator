@@ -187,7 +187,8 @@ def explain_options(metadata):
 def build_run_metadata(csanno_version, input_file=None, single_mol=None, mols=None,
                        chembl_server=None, do_sims=False, thres=None, search="A",
                        report="A", ofield="G", join_aggregates=False,
-                       activity_rules=None, report_format="markdown"):
+                       activity_rules=None, report_format="markdown",
+                       run_command=None):
     """Create the metadata block required in the report and JSON."""
     mols = mols or {}
     activity_rules = activity_rules or {}
@@ -203,6 +204,7 @@ def build_run_metadata(csanno_version, input_file=None, single_mol=None, mols=No
         "source": source,
         "molecule_count": len(mols),
         "chembl_server": chembl_server,
+        "run_command": run_command,
         "options": {
             "similarity_search": bool(do_sims),
             "similarity_threshold": thres,
@@ -985,10 +987,15 @@ def render_text_report(payload, include_digest=True, include_glossary=True):
     lines.append("")
     lines.append("CSANNO options")
     lines.append("--------------------------")
+
+    if metadata.get("run_command"):
+        lines.append("Command used:")
+        lines.append(metadata.get("run_command"))
+        lines.append("")
+
     for explanation in metadata.get("options_explained", []):
         lines.append("- " + explanation)
     lines.append("")
-
     
     lines.append("")
     lines.append("Raw data")
@@ -1173,10 +1180,19 @@ def render_markdown_report(payload, include_digest=True, include_glossary=True):
 
     lines.append("## CSANNO options")
     lines.append("")
+
+    if metadata.get("run_command"):
+        lines.append("**Command used:**")
+        lines.append("")
+        lines.append("```bash")
+        lines.append(str(metadata.get("run_command")))
+        lines.append("```")
+        lines.append("")
+
     for explanation in metadata.get("options_explained", []):
         lines.append("- " + _escape_md(explanation))
     lines.append("")
-
+    
     lines.append("## Raw data")
     lines.append("")
     for section in payload.get("sections", []):
