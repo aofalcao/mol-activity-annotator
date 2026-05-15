@@ -20,18 +20,16 @@
 #OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
 #DEALINGS IN THE SOFTWARE.
 
-import numpy as np
 
 from rdkit import Chem
-from rdkit.Chem import AllChem
 from rdkit.Chem.inchi import InchiToInchiKey
 import pickle
 import os
+import sys
 import time
+import shlex
 
-import json
 import copy
-import requests
 
 try:
     import yaml
@@ -44,18 +42,11 @@ from csanno_reports import (
     write_report_aggregated, write_report_detail, write_reports_for_channel, write_run_info,
 )
 
-DEFAULT_CHEMBL_SERVER = "https://www.ebi.ac.uk"
-REQUEST_TIMEOUT = 30
-REQUEST_RETRIES = 2
-REQUEST_RETRY_DELAY_SECONDS = 0.75
-RETRIABLE_HTTP_STATUS_CODES = set([429, 500, 502, 503, 504])
-TARGET_CACHE_JSON = "./btargets_cache.json"
-TARGET_CACHE_PICKLE = "./btargets.pickle"
+import chembl_access as data_access
+
+DEFAULT_CHEMBL_SERVER = data_access.DEFAULT_SERVER
 DEFAULT_ACTIVITY_RULES_FILE = "csanno_default_rules.yaml"
 
-# Collected during one CSANNO run. These are reported once, instead of printing
-# one warning line for every transient ChEMBL failure.
-REQUEST_FAILURES = []
 
 DEFAULT_ACTIVITY_RULES = {
     "activity_rules_version": "csanno-default-0.5",
@@ -138,62 +129,16 @@ def warn(msg, silent=False):
         print("WARNING: %s" % msg)
 
 
-def reset_request_failures():
-    del REQUEST_FAILURES[:]
 
 
-def _clean_request_params(params):
-    if params is None:
-        return {}
-    try:
-        return {str(key): str(value) for key, value in params.items()}
-    except AttributeError:
-        return {"params": str(params)}
 
 
-def record_request_failure(url, params=None, status_code=None, error=None):
-    REQUEST_FAILURES.append({
-        "url": str(url),
-        "params": _clean_request_params(params),
-        "status_code": status_code,
-        "error": str(error) if error is not None else "",
-    })
 
 
-def get_request_failure_summary(example_limit=8):
-    by_status = {}
-    by_endpoint = {}
-    for item in REQUEST_FAILURES:
-        status = str(item.get("status_code") or "network/non-http")
-        by_status[status] = by_status.get(status, 0) + 1
-        endpoint = item.get("url", "")
-        by_endpoint[endpoint] = by_endpoint.get(endpoint, 0) + 1
-    examples = REQUEST_FAILURES[:example_limit]
-    return {
-        "count": len(REQUEST_FAILURES),
-        "by_status": by_status,
-        "by_endpoint": by_endpoint,
-        "examples": examples,
-    }
 
 
-def print_request_failure_summary(silent=False):
-    summary = get_request_failure_summary()
-    if summary.get("count", 0) == 0 or silent:
-        return
-    pieces = []
-    for status, count in sorted(summary.get("by_status", {}).items()):
-        pieces.append("%s: %d" % (status, count))
-    warn("Some ChEMBL/HTTP requests failed after retry (%d total; %s). "
-         "The run continued, but affected molecules were treated as having no retrievable data. "
-         "See the JSON metadata request_warnings block for examples."
-         % (summary.get("count", 0), ", ".join(pieces)), silent)
 
 
-def normalise_chembl_server(chembl_server):
-    if chembl_server is None or str(chembl_server).strip() == "":
-        return DEFAULT_CHEMBL_SERVER
-    return str(chembl_server).rstrip("/")
 
 
 def safe_float(x):
@@ -450,306 +395,28 @@ def read_molecules(fname, silent=False):
     return mols
 
 
-#this is the heart of the matter
-# for one molecule
-#first we get to know whether the molecule exists
-#then we get the chemblid of the molecule
-#then we get the assays
-#finally we get the targets
 
 
-def read_url(url, params=None, timeout=REQUEST_TIMEOUT, silent=True, retries=REQUEST_RETRIES,
-             retry_delay=REQUEST_RETRY_DELAY_SECONDS, warn_immediately=False):
-    """Read a JSON URL with small retry/backoff handling for public web-service glitches."""
-    last_error = None
-    last_status = None
-    for attempt in range(int(retries) + 1):
-        try:
-            response = requests.get(url, params=params, timeout=timeout)
-            last_status = response.status_code
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.Timeout as exc:
-            last_error = exc
-            last_status = None
-        except requests.exceptions.HTTPError as exc:
-            last_error = exc
-            response = getattr(exc, "response", None)
-            last_status = getattr(response, "status_code", last_status)
-        except requests.exceptions.RequestException as exc:
-            last_error = exc
-            response = getattr(exc, "response", None)
-            last_status = getattr(response, "status_code", last_status)
-        except ValueError as exc:
-            # HTTP succeeded, but the payload was not valid JSON. Retrying is unlikely
-            # to help unless it was a transient proxy/service page.
-            last_error = exc
-            last_status = getattr(locals().get("response", None), "status_code", last_status)
-
-        is_retriable = (last_status in RETRIABLE_HTTP_STATUS_CODES) or isinstance(last_error, requests.exceptions.Timeout)
-        if is_retriable and attempt < int(retries):
-            time.sleep(float(retry_delay) * (2 ** attempt))
-            continue
-
-        record_request_failure(url, params=params, status_code=last_status, error=last_error)
-        if warn_immediately:
-            if isinstance(last_error, requests.exceptions.Timeout):
-                warn("Request timed out after retry: %s" % url, silent)
-            elif isinstance(last_error, ValueError):
-                warn("Could not decode JSON response from %s" % url, silent)
-            else:
-                warn("Request failed after retry for %s: %s" % (url, last_error), silent)
-        return None
-
-    return None
 
 
-def load_target_cache(silent=False):
-    if os.path.isfile(TARGET_CACHE_JSON):
-        try:
-            with open(TARGET_CACHE_JSON, "rt") as fil:
-                data = json.load(fil)
-            if isinstance(data, dict):
-                return data
-        except (IOError, ValueError) as exc:
-            warn("Could not read target JSON cache: %s" % exc, silent)
-
-    # Pickle is intentionally not loaded by default because loading an untrusted pickle
-    # can execute arbitrary code. Set CSANNO_TRUST_PICKLE_CACHE=1 if this old cache file
-    # is trusted and you want to reuse it.
-    if os.path.isfile(TARGET_CACHE_PICKLE):
-        if os.environ.get("CSANNO_TRUST_PICKLE_CACHE") == "1":
-            try:
-                with open(TARGET_CACHE_PICKLE, "rb") as fil:
-                    data = pickle.load(fil)
-                if isinstance(data, dict):
-                    warn("Loaded legacy pickle cache because CSANNO_TRUST_PICKLE_CACHE=1", silent)
-                    return data
-            except Exception as exc:
-                warn("Could not read legacy pickle cache: %s" % exc, silent)
-        else:
-            warn("Ignoring legacy btargets.pickle cache. Set CSANNO_TRUST_PICKLE_CACHE=1 to trust it.", silent)
-
-    return {}
 
 
-def save_target_cache(btargets, silent=False):
-    try:
-        with open(TARGET_CACHE_JSON, "wt") as fil:
-            json.dump(btargets, fil)
-    except IOError as exc:
-        warn("Could not write target JSON cache: %s" % exc, silent)
 
 
-def get_chembl_id(inchikey, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
-    chembl_server = normalise_chembl_server(chembl_server)
-    url = chembl_server + "/chembl/api/data/molecule.json"
-    params = {"molecule_structures__standard_inchi_key": inchikey, "format": "json"}
-    data = read_url(url, params=params, silent=silent)
-    if data is None:
-        return False
-
-    molecules = data.get("molecules", [])
-    if len(molecules) == 1:
-        return molecules[0].get('molecule_chembl_id', False)
-    else:
-        return False
 
 
-def _normalise_chembl_next_url(chembl_server, next_ref):
-    if next_ref is None or str(next_ref).strip() == "":
-        return None
-    next_ref = str(next_ref)
-    if next_ref.startswith("http://") or next_ref.startswith("https://"):
-        return next_ref
-    if next_ref.startswith("/"):
-        return normalise_chembl_server(chembl_server) + next_ref
-    return normalise_chembl_server(chembl_server) + "/" + next_ref
 
 
-def _extract_activity_records(data, mol_id, silent=False):
-    activities = []
-    for act in (data or {}).get("activities", []):
-        try:
-            record = {"assay_id": act.get("assay_chembl_id"),
-                      "target_id": act.get('target_chembl_id'),
-                      "assay_type": act.get('standard_type'),
-                      "units": act.get('standard_units'),
-                      "value": act.get('standard_value'),
-                      "rel": act.get('standard_relation'),
-                      "pvalue": act.get('pchembl_value')}
-            if record["target_id"] is not None:
-                activities.append(record)
-        except (AttributeError, KeyError) as exc:
-            warn("Skipping malformed activity for %s: %s" % (mol_id, exc), silent)
-    return activities
 
-
-def get_activities_chembl(mol_id, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
-    """For a given ChEMBL molecule id, return activity records.
-
-    ChEMBL activity responses are paginated. Using a normal page size and
-    following page_meta['next'] is gentler on the public service than asking
-    for a special all-at-once response.
-    """
-    if mol_id is None or mol_id is False:
-        return []
-
-    chembl_server = normalise_chembl_server(chembl_server)
-    url = chembl_server + "/chembl/api/data/activity.json"
-    params = {"molecule_chembl_id": mol_id, "format": "json", "limit": 1000}
-
-    activities = []
-    while url is not None:
-        data = read_url(url, params=params, silent=silent)
-        # Only the first request uses params; ChEMBL's page_meta.next already
-        # contains all filters and offsets for subsequent pages.
-        params = None
-        if data is None:
-            break
-        activities.extend(_extract_activity_records(data, mol_id, silent=silent))
-        next_ref = (data.get("page_meta", {}) or {}).get("next")
-        url = _normalise_chembl_next_url(chembl_server, next_ref)
-
-    return activities
 
     
 
-def get_targets_chembl(tid, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
-    #gets the target information
-    # this could perhaps be sped up if we keep a cache of already queried tids
-    if tid is None or tid is False:
-        return []
-
-    chembl_server = normalise_chembl_server(chembl_server)
-    url = chembl_server + "/chembl/api/data/target.json"
-    params = {"target_chembl_id": tid, "format": "json"}
-    data = read_url(url, params=params, silent=silent)
-    if data is None:
-        return []
-    
-    targets = data.get("targets", [])
-    if len(targets) == 0:
-        return []
-
-    targ = targets[0]
-    organism = targ.get("organism", "")
-    pname = targ.get("pref_name", "")
-    tcomps = []
-    for comp in targ.get("target_components", []):
-        acc = comp.get("accession", "")
-        gene = ""
-        for syn in comp.get("target_component_synonyms", []):
-            if syn.get("syn_type") == "GENE_SYMBOL":
-                gene = syn.get("component_synonym", "").upper()
-        D = {"organism": organism, "pname": pname, "uniprot": acc, "gene": gene}
-        tcomps.append(D)
-    return tcomps
     
 
-def get_target_info_chembl(inchikey, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
-    mol_id = get_chembl_id(inchikey, chembl_server=chembl_server, silent=silent)
-    if not mol_id:
-        return {}
-    acts = get_activities_chembl(mol_id, chembl_server=chembl_server, silent=silent)
-    targets = {}
-    for act in acts:
-        targs = get_targets_chembl(act.get("target_id"), chembl_server=chembl_server, silent=silent)
-        if len(targs) >= 1:
-            targets[act["target_id"]] = targs
-    return targets
     
 
 
-# a better approach might be:
-#1. get all the assays of all molecules
-#2. get all the targets 
-#3 assemble everything for a nice output
 
-
-def get_targets_info_chembl(mol_list, data_type="inchikeys", silent=False, chembl_server=DEFAULT_CHEMBL_SERVER):
-    """
-    for each molecule within mol list gets the possible active targets where it has been
-    identified as such
-    Returns: 
-       mol_ids: a dictionary with inchikey as key and the id as value (only when datatype is "inchikey")
-       mol_acts: a dictionary with mol_id as key and a list of targets as value
-       btargets: extra information about each target (organism, gene and uniprot_id) 
-    """
-    mol_ids = {}
-    mol_acts = {}
-    if not silent:
-        print("Processing molecules...")
-
-    if data_type == "inchikeys":
-        i = 0
-        for ick in mol_list:
-            mol_id = get_chembl_id(ick, chembl_server=chembl_server, silent=silent)
-            if mol_id: 
-                mol_ids[ick] = mol_id
-                acts = get_activities_chembl(mol_id, chembl_server=chembl_server, silent=silent)
-                mol_acts[mol_id] = acts
-                i += 1
-                if i % 100 == 0 and not silent:
-                    print("\tProcessed %4d molecules" % i)
-    elif data_type == "chemblids":
-        i = 0
-        for mol_id in mol_list:
-            acts = get_activities_chembl(mol_id, chembl_server=chembl_server, silent=silent)
-            mol_acts[mol_id] = acts
-            i += 1
-            if i % 100 == 0 and not silent:
-                print("\tProcessed %4d molecules" % i)
-    else:
-        print("Wrong data type. Exiting")
-        return {}, {}, {}
-
-    #now assemble all the chembl targets found
-    ctargets = set()
-    for mid in mol_acts:
-        acts = mol_acts[mid]
-        for act in acts:
-            tid = act.get("target_id")
-            if tid is not None:
-                ctargets.add(tid)
-
-    if not silent:
-        print("Getting the Chembl target data...")
-
-    #finally process all targets at once and get the biological targets
-    i = 0
-
-    #this part below is perhaps overkill as we are getting biological information for each target
-    #even if such target will never appear on the report. This should be done perhaps ONLY AFTER 
-    # the target has passed the filter!
-
-    btargets = load_target_cache(silent=silent)
-    update_cache = False
-    for ctarg in ctargets: 
-        if ctarg in btargets: 
-            continue
-
-        update_cache = True
-        if not silent:
-            print("\tthis one is new! ->", ctarg)
-        btargs = get_targets_chembl(ctarg, chembl_server=chembl_server, silent=silent)
-        btargets[ctarg] = []
-        for bt in btargs:
-            btargets[ctarg].append((bt.get("organism", ""), bt.get("gene", ""), bt.get("uniprot", "")))
-        #just going to count those targets for which we need to retrieve them from chembl
-        i += 1
-        if i % 100 == 0 and not silent:
-            print("\tProcessed %4d targets" % i)
-
-    #if any change in btargets we will write them
-    if update_cache == True:
-        save_target_cache(btargets, silent=silent)
-    if not silent:
-        print("Done!")
-        
-    #mol_acts - dic whith key chembl_molid and activities as value
-    #btargets - dic with chembl target id as key and tuple with org gene and uniprot code
-    return mol_ids, mol_acts, btargets
 
 
 def check_activity(act, activity_rules=None):
@@ -770,53 +437,8 @@ def check_activity(act, activity_rules=None):
 
 
 
-def get_sims(smiles, sim_thr=0.9, chembl_server=DEFAULT_CHEMBL_SERVER, silent=False):
-    """
-    Gets the similar molecules to a given compound by querying Chembl
-    """
-    sim_mols = []
-    ssim = str(int(sim_thr * 100))
-    chembl_server = normalise_chembl_server(chembl_server)
-
-    url = chembl_server + "/chembl/api/data/similarity.json"
-    params = {"smiles": smiles, "limit": 0, "similarity": ssim}
-    data = read_url(url, params=params, silent=silent)
-    if data is None:
-        return []
-
-    the_mols = data.get("molecules", [])
-    page_meta = data.get("page_meta", {})
-    while page_meta.get("next") is not None:
-        next_url = chembl_server + page_meta.get("next")
-        data = read_url(next_url, silent=silent)
-        if data is None:
-            break
-        the_mols += data.get("molecules", [])
-        page_meta = data.get("page_meta", {})
-
-    if len(the_mols) > 0:
-        for mol in the_mols:
-            mid = mol.get("molecule_chembl_id")
-            if mid is not None:
-                sim_mols.append(mid)
-    return sim_mols
 
 
-def get_all_sims(mols, thres, silent, chembl_server=DEFAULT_CHEMBL_SERVER):
-    sim_mols = []
-    i = 0
-    sim_mols_detail = {}
-    for mid in mols:
-        smi = mols[mid][0]
-        sims = get_sims(smi, thres, chembl_server=chembl_server, silent=silent)
-        sim_mols += sims
-        sim_mols_detail[mid] = sims
-        i += 1
-        if i % 100 == 0 and not silent:
-            print("\tProcessed %4d similarities" % i)
-    #returns a clean set with ALL the distinct molecules from chembl in the neighborhood of the data set
-    # and a Dictionary with, for each molecule in the data is present get all its similarities
-    return set(sim_mols), sim_mols_detail
 
 
 
@@ -825,8 +447,7 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
                          join_aggregates=False, silent=False, search="A", single_mol=None, ofield="G",
                          chembl_server=DEFAULT_CHEMBL_SERVER, rules_file=None, activity_rules=None,
                          legacy_reports=False, report_format="markdown", include_glossary=True, include_digest=True,
-                         out_file=None):
-    reset_request_failures()
+                         out_file=None, run_command=None):
     """Main entry point.
 
     The default file output is now:
@@ -838,6 +459,8 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
     Set legacy_reports=True from Python, or use -legacy_reports from the command
     line, to also produce the old split aggregate/detail files.
     """
+    data_access.reset_request_failures()
+
     if activity_rules is None:
         activity_rules = load_activity_rules(rules_file=rules_file, silent=silent)
 
@@ -891,11 +514,13 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
                                   ofield=ofield,
                                   join_aggregates=join_aggregates,
                                   activity_rules=activity_rules,
-                                  report_format=report_format)
+                                  report_format=report_format,
+                                  run_command=run_command)
 
     if write_files == True and legacy_reports == True:
         write_run_info(run_info_file,
                        {"csanno_version": version,
+                        "run_command": run_command,
                         "activity_rules_version": activity_rules.get("activity_rules_version", "unknown"),
                         "activity_rules_source": activity_rules.get("_source", "unknown"),
                         "chembl_server": chembl_server,
@@ -918,7 +543,7 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
         icks.append(mols[mid][1])
 
     # Tier 0: exact matches in ChEMBL.
-    mol_ids, mol_acts, targets = get_targets_info_chembl(icks, silent=silent, chembl_server=chembl_server)
+    mol_ids, mol_acts, targets = data_access.get_targets_info(icks, silent=silent, server=chembl_server)
 
     mol_active_genes, target_ids = make_reports(mols, mol_ids, mol_acts, targets, search=search, ofield=ofield,
                                                 activity_rules=activity_rules, activity_checker=check_activity)
@@ -935,7 +560,7 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
     if do_sims == True:
         if not silent:
             print("Get the similars...", end=" ")
-        sim_mols, sim_mols_detail = get_all_sims(mols, thres, silent, chembl_server=chembl_server)
+        sim_mols, sim_mols_detail = data_access.get_all_similar_molecules(mols, thres, silent, server=chembl_server)
 
         # Exclude exact/self matches already handled by Tier 0.
         sim_mols_x = sim_mols - set(mol_ids.values())
@@ -943,8 +568,8 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
             print("N. of similar molecules:", len(sim_mols_x))
 
         sim_mols_x = list(sim_mols_x)
-        mol_ids_x, mol_acts_x, targets_x = get_targets_info_chembl(sim_mols_x, "chemblids", silent=silent,
-                                                                    chembl_server=chembl_server)
+        mol_ids_x, mol_acts_x, targets_x = data_access.get_targets_info(sim_mols_x, "chemblids", silent=silent,
+                                             server=chembl_server)
 
         # Similarity reports honour the same -search option as exact-match reports.
         mol_active_genes_x, target_ids_x = make_reports_x(mol_acts_x, targets_x, search=search, ofield=ofield,
@@ -993,7 +618,7 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
                "targets": targets,
                "targets_x": None}
 
-    request_summary = get_request_failure_summary()
+    request_summary = data_access.get_request_failure_summary()
     if request_summary.get("count", 0) > 0:
         metadata["request_warnings"] = request_summary
         rep["request_warnings"] = request_summary
@@ -1004,7 +629,7 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
     rep["metadata"] = metadata
     rep["output_files"] = {"readable_report": report_file, "json_report": report_json}
 
-    print_request_failure_summary(silent=silent)
+    data_access.print_request_failure_summary(silent=silent)
 
     if write_files == True or to_screen == True:
         write_combined_report(rep, metadata,
@@ -1036,7 +661,6 @@ Control parameters:
     -sim thr - similarity threshold [if absent (default) no similarity search will be performed]
     -mol [molecule in SMILES format] - molecule for which analysis is going to be performed.  
          Incompatible with -in option
-    -out file_name - output file name [by default will append to the input file name]
     -report [AD]: A - aggregate report;
                   D - Detailed report (one line for each molecule)
                   Both options simultaneously are permitted and both reports are produced
@@ -1049,15 +673,18 @@ Control parameters:
                   U - outputs the uniprot id;
                   O - outputs the organism;
                   All options can be included simultaneously
-    -chembl_server URL - ChEMBL-compatible server [default: https://www.ebi.ac.uk]
+    -chembl_server URL - ChEMBL-compatible data server [default: https://www.ebi.ac.uk]
     -rules YAML_file - YAML file defining active/non-active/uncertain classification rules
 
 Output Control Options:
     By default, CSANNO writes one readable Markdown report (<root>_report.md) and one
-    JSON report (<root>_results.json) containing metadata, digest, glossary, and raw data.
+    JSON report (<root>_results.json) containing metadata and raw data.
+    -out file_name - output file name 
     -outfmt [markdown|text] - writes the readable report as .md (default) or .txt
     -legacy_reports - also writes the old split T0/T1 aggregate/detail text files
     -joint_aggs - with -sim and -legacy_reports, also produces joined T0+T1 legacy files
+    -glossary - includes a glossary of the targets found with links
+    -digest - includes an abbridged analysis of Tier 0 and Tier 1 reports
     -silent - no intermediate output at all
     -help - this screen
     -nofiles - no files are created
@@ -1068,15 +695,14 @@ Output Control Options:
     print(s.strip())
     
 
-version = "CSANNO - (C) 2019/2026 - Andre O. Falcao BioISI - DI/FCUL version 0.5.20260510"
+version = "CSANNO - (C) 2019/2026 - Andre O. Falcao BioISI - DI/FCUL version 0.5.20260515"
 if __name__ == "__main__":
-    import sys
-    import time
+
     start_t = time.time()
     if len(sys.argv) < 2:
         print("Invalid option. Exiting")
         exit()
-
+        
     #defaults
     report = "A"  #default is only the aggregates
     search = "A"  #default only actives 
@@ -1103,6 +729,8 @@ if __name__ == "__main__":
                               "-toscreen", "-legacy_reports", "-legacy", "-digest", "-glossary"]
 
     inp_fs = sys.argv
+    run_command = shlex.join(sys.argv)
+
 
     if '-help' in inp_fs or '--help' in inp_fs:
         print_help()
@@ -1141,7 +769,7 @@ if __name__ == "__main__":
         if '-ofield' in input_args:
             ofield = input_args["-ofield"]
         if '-chembl_server' in input_args:
-            chembl_server = normalise_chembl_server(input_args["-chembl_server"])
+            chembl_server = data_access.normalise_server(input_args["-chembl_server"])
         if '-rules' in input_args:
             rules_file = input_args["-rules"]
         if '-outfmt' in input_args:
@@ -1213,7 +841,7 @@ if __name__ == "__main__":
                                    chembl_server=chembl_server, rules_file=rules_file,
                                    legacy_reports=legacy_reports, report_format=report_format, 
                                    include_glossary=glossary, include_digest=digest,
-                                   out_file=out_file)
+                                   out_file=out_file, run_command=run_command)
 
         if writepickle == True:
             if input_file is not None:
