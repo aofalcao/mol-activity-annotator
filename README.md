@@ -129,12 +129,12 @@ Essentially it allows to search for structural similars (Currently using ChEMBLE
 
 ## Molecular activity annotation
 
-`csanno` is a molecular annotator that uses ChEMBL to search to identify plausible targets. The question we are trying to solve in this program could be better defined with a simple example. Imagine we have one molecule and we want to identify probable targets in which it may be active. There are two possible situations: 
+`csanno` is a molecular annotator that uses A molecular  activity database such as ChEMBL to search to identify plausible targets. The question we are trying to solve in this program could be better defined with a simple example. Imagine we have one molecule and we want to identify probable targets in which it may be active. There are two possible situations: 
 
-1. The molecule is present in ChEMBL and therefore all the targets for which it was found active are retrieved
-2. The molecule is not found in ChEMBL. And in that case what it will do is that it will look for similar molecules (using ChEMBL's similarity search) and will output the found targets and the number of molecule similars that were actually found active there
+1. The molecule is present in the database and therefore all the targets for which it was found active are retrieved
+2. The molecule is not found in the database. And in that case what it will do is that it will look for similar molecules (using ChEMBL's similarity search) and will output the found targets and the number of molecule similars that were actually found active there
 
-The tool also has a input file, option where for instance we might group a set of molecules with similar physiological activity, to try to identify common or most likely targets. All of this would be actually possible to do manually using ChEMBL online, but it would be tedious and extremely prone to errors. 
+The tool also has a input file, option where for instance we might group a set of molecules with similar physiological activity, to try to identify common or most likely targets. All of this would be actually possible to do manually browsing and querying the database, but it would be tedious and extremely prone to errors. 
 
 
 ### Simple single molecule annotation
@@ -144,22 +144,11 @@ The simplest way of running the csanno is by testing only one molecule that can 
 Therefore running the app with zolpidem (SMILES:CN(C)C(=O)Cc1c(nc2ccc(C)cn12)c3ccc(C)cc3)
 
 ```sh
-$ ython csanno.py -mol CN(C)C(=O)Cc1c(nc2ccc(C)cn12)c3ccc(C)cc3 -sim 0.7 -out data\zolpidem-A
+$ python csanno.py -mol CN(C)C(=O)Cc1c(nc2ccc(C)cn12)c3ccc(C)cc3 -sim 0.7 -out data\zolpidem-A
 ```
 
-will produce the [following output]
+will produce the [following output](https://github.com/aofalcao/mol-activity-annotator/blob/main/Reports/zolpidem-A_report.md)
 
-```
-TSPO                 1  1.0000
-SLCO1B3              1  1.0000
-SLCO1B1              1  1.0000
-LMNA                 1  1.0000
-GABRA3               1  1.0000
-GABRA2               1  1.0000
-GABRA1               1  1.0000
-```
-
-This result is a table which must be read this way. In the first column it is the gene symbol associated with a given assay for which the molecule has been proven active. It is important to notice that **activity** here means that a positive response has been found for it in at least one assay, whether it is Activation, Ki, IC50 or simple inhibition. If a positive result has been found, then it is reported. The next column refers to how many molecules were actually measured as active in that target. As we have only used one molecule, the only possible result is 1. Finally, the last column with values of 1.0000, refers to the ratio of the input molecules for which there were found actives. Again as we have tested only one molecule, this is the only possible output
 
 ### Simple multiple molecule annotation
 
@@ -172,4 +161,8 @@ Fluoxetine	NA	CNCCC(c1ccccc1)Oc2ccc(cc2)C(F)(F)F
 Tradozone	NA	Clc4cccc(N3CCN(CCCN1/N=C2/C=C\C=C/N2C1=O)CC3)c4
 Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 ```
+
+Results can be [found here](https://github.com/aofalcao/mol-activity-annotator/blob/main/Reports/anti-dep_report.md)
+
+
 
