@@ -162,6 +162,17 @@ Tradozone	NA	Clc4cccc(N3CCN(CCCN1/N=C2/C=C\C=C/N2C1=O)CC3)c4
 Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 ```
 
+```sh
+$ python csanno.py -in data\anti-dep.sar -sim 0.7 -report AD -digest -glossary
+```
+The above basically says:
+* Analyze the file `data\anti-dep.sar` by the direct evidence there is for the whole molecules
+* Check all molecules in the database that are currently similar to it at 70% (`-sim 0.7`)
+* Create an aggregate and detailed report (`-report AD`) getting, for each molecule and each tier (direct vs analogue evidence), the actual targets found, relative to the targets, how many analogues were identified there
+* create a digest - interpretable analysis of the results (`-digest`)
+* create a glossary of the targets found with links to Chembl and Uniprot (`-glossary`)
+  
+
 Results can be [found here](https://github.com/aofalcao/mol-activity-annotator/blob/main/Reports/anti-dep_report.md)
 
 
