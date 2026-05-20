@@ -1,0 +1,88 @@
+# CSANNO strict activity classification rules
+#
+# Stricter alternative to csanno-default-0.5.
+#
+# Returned classes:
+#   A  = active / positive evidence
+#   N  = non-active / negative evidence
+#   NA = uncertain, unsupported, or not classifiable
+#
+# Main differences from the default profile:
+#   - Concentration-like endpoints are active only below 1,000 nM (1 uM).
+#   - pKi and pIC50 endpoints are active only above 6.0.
+#   - Inhibition endpoints require a stronger response (>50), rather than merely >0.
+#   - Generic "Activity" records are treated as uncertain because they are too ambiguous
+#     for a strict profile.
+
+activity_rules_version: csanno-strict-1uM-0.5
+profile_name: CSANNO strict 1 uM activity rules
+profile_description: >
+  Conservative CSANNO activity profile requiring concentration-like endpoints
+  below 1,000 nM, pKi/pIC50 values above 6.0, and stronger inhibition-style
+  responses. Ambiguous generic activity records are not classified as active.
+
+default_result: NA
+missing_relation_default: "="
+allowed_results: [A, N, NA]
+
+unit_multipliers:
+  nM: 1
+  uM: 1000
+  µM: 1000
+  mM: 1000000
+
+rules:
+  - name: low_concentration_activity_strict_1uM
+    standard_types: [Ki, IC50, Kd, EC50, AC50, Potency]
+    value_field: value
+    units_field: units
+    relation_field: rel
+    unit_conversion: true
+    converted_unit: nM
+    missing_value_result: N
+    missing_units_result: NA
+    unsupported_relation_result: NA
+    relations:
+      "=":  {operator: "<", threshold: 1000, true_result: A,  false_result: N}
+      ">":  {operator: "<", threshold: 1000, true_result: NA, false_result: N}
+      ">=": {operator: "<", threshold: 1000, true_result: NA, false_result: N}
+      "<":  {operator: "<", threshold: 1000, true_result: A,  false_result: NA}
+      "<=": {operator: "<", threshold: 1000, true_result: A,  false_result: NA}
+
+  - name: inhibition_strong_response
+    standard_types: [INH, Inhibition]
+    value_field: value
+    relation_field: rel
+    missing_value_result: N
+    unsupported_relation_result: NA
+    relations:
+      "=":  {operator: ">", threshold: 50, true_result: A,  false_result: N}
+      ">":  {operator: ">", threshold: 50, true_result: A,  false_result: NA}
+      ">=": {operator: ">", threshold: 50, true_result: A,  false_result: NA}
+      "<":  {operator: ">", threshold: 50, true_result: NA, false_result: N}
+      "<=": {operator: ">", threshold: 50, true_result: NA, false_result: N}
+
+  - name: p_activity_high_value_strict
+    standard_types: [pKi, pIC50]
+    value_field: value
+    relation_field: rel
+    missing_value_result: N
+    unsupported_relation_result: NA
+    relations:
+      "=":  {operator: ">", threshold: 6.0, true_result: A,  false_result: N}
+      ">":  {operator: ">", threshold: 6.0, true_result: A,  false_result: NA}
+      ">=": {operator: ">", threshold: 6.0, true_result: A,  false_result: NA}
+      "<":  {operator: ">", threshold: 6.0, true_result: NA, false_result: N}
+      "<=": {operator: ">", threshold: 6.0, true_result: NA, false_result: N}
+
+  - name: generic_activity_ambiguous_strict
+    standard_types: [Activity]
+    value_field: value
+    units_field: units
+    relation_field: rel
+    units_allowed: ["&"]
+    result_if_unit_mismatch: NA
+    missing_value_result: NA
+    unsupported_relation_result: NA
+    relations:
+      "=": {operator: ">", threshold: 0, true_result: NA, false_result: NA}
