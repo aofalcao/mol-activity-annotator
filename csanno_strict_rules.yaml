@@ -14,7 +14,7 @@
 #   - Generic "Activity" records are treated as uncertain because they are too ambiguous
 #     for a strict profile.
 
-activity_rules_version: csanno-strict-1uM-0.5
+activity_rules_version: csanno-strict-0.5
 profile_name: CSANNO strict 1 uM activity rules
 profile_description: >
   Conservative CSANNO activity profile requiring concentration-like endpoints
