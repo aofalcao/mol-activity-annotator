@@ -704,7 +704,7 @@ if __name__ == "__main__":
         exit()
         
     #defaults
-    report = "A"  #default is only the aggregates
+    report = "AD"  #default is only the aggregates
     search = "A"  #default only actives 
     ofield = "G"    #default, only outputs the Gene
     do_sims = False
