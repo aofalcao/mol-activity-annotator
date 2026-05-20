@@ -48,32 +48,30 @@ Just make sure these are installed within the `rdkit` environment.
 
 ### Installing CSANNO
 
-This should be a trivial process. Just copy the `csanno.py` files to a new folder in your woring directory: 
+This should be a trivial process. Either use git or just copy the `.py` files to a new folder in your woring directory: 
 
 ```
-$ mkdir qsartools
-$ cp [source code path]/*.py qsartools/.
-$ cd qsartools
+$ mkdir csanno
+$ cp [source code path]/*.py csanno/.
+$ cd csanno
 ```
 
 ### SAR files
 
-SAR files are the required format for most of the operations. SAR files are text files that should store activity data for a given target for a set of molecules and each line represents one molecule. Columns are separated by `<tab>`. The basic structur of a SAR file is
+SAR files are the required format for file based operations. SAR files are text files that should store activity data for a given target for a set of molecules and each line represents one molecule. Columns are separated by `<tab>`. The basic structur of a SAR file is
 
 * The first column is an alphanumeric identifier for the molecule (should be unique);
 * The second column contains the activity registered for that molecule (may be binary qualitative)
 * The third column contains the molecule SMILES
 
-Here is a sample SAR file, where the identifiers are the ChEMBL IDs
+Here is a sample SAR file, where the identifiers are the Antidepressants. The middle column is NA, meaning that the activity is unknown or not relevant
 
 ```
-CHEMBL158973	0.5000	CN(C)CCSC(C)(C)C
-CHEMBL476516	0.1880	NCCc1ccc(Br)cc1
-CHEMBL309689	0.0000	Oc1noc2c1CCNCC2
-...
-CHEMBL2331792	0.0000	COc1noc2c1CCNCC2
-CHEMBL2331804	0.0000	Cn1oc2c(c1=O)CCNCC2
-CHEMBL2436555	0.2200	NC1=Nc2ccc(Cl)cc2CN1
+Sertraline	NA	ClC1=CC=C([C@H]2C3=C([C@H](CC2)NC)C=CC=C3)C=C1Cl
+Citalopran	NA	Fc1ccc(cc1)C3(OCc2cc(C#N)ccc23)CCCN(C)C
+Fluoxetine	NA	CNCCC(c1ccccc1)Oc2ccc(cc2)C(F)(F)F
+Tradozone	NA	Clc4cccc(N3CCN(CCCN1/N=C2/C=C\C=C/N2C1=O)CC3)c4
+Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 ```
 
 ## Asking for Help
@@ -85,10 +83,11 @@ $ python csanno.py -help
 ```
 producing
 ```
-CSANNO - (C) 2019/2023 - Andre O. Falcao DI/FCUL version 0.3.20230605
-Usage: This is a Python3 tool and requires an enviroment where RDkit and requests are installed.
-       To run type python csanno.py  -in [input .sar file] [options]
-
+(rdkit-env) C:\Users\aofal\Desktop\Projectos\CSANNO>python csanno.py -help
+CSANNO - (C) 2019/2026 - Andre O. Falcao BioISI - DI/FCUL version 0.5.20260515
+Usage: This is a Python tool and requires an enviroment where RDkit and requests are installed.
+       To run type: python csanno.py  -in [input .sar file] [options] OR
+                    python csanno.py  -mol [molecule SMILES] [options]
 Control parameters:
     -in file_name - the data set to annotate (required) (.sar format)
     -sim thr - similarity threshold [if absent (default) no similarity search will be performed]
@@ -96,26 +95,36 @@ Control parameters:
          Incompatible with -in option
     -report [AD]: A - aggregate report;
                   D - Detailed report (one line for each molecule)
-                  Both options simultaneusly are permitted and both reports are produced
+                  Both options simultaneously are permitted and both reports are produced
     -search [ANU] A - searches for actives in the database (default);
-                  N - searches non-actives;
-                  U - searches unknowns (compounds for which activity is not determined)
+                  N - searches non-actives in exact ChEMBL matches;
+                  U - searches unknowns in exact ChEMBL matches;
+                  Similarity reports use the same search option
                   All options can be included simultaneously
     -ofield [GUO] G - outputs the unique gene (default);
                   U - outputs the uniprot id;
-                  O - outputs the organism
+                  O - outputs the organism;
                   All options can be included simultaneously
+    -chembl_server URL - ChEMBL-compatible data server [default: https://www.ebi.ac.uk]
+    -rules YAML_file - YAML file defining active/non-active/uncertain classification rules
 
 Output Control Options:
-    -joint_aggs - produces a report with conjoined similarities and exact matches
+    By default, CSANNO writes one readable Markdown report (<root>_report.md) and one
+    JSON report (<root>_results.json) containing metadata and raw data.
+    -out file_name - output file name
+    -outfmt [markdown|text] - writes the readable report as .md (default) or .txt
+    -legacy_reports - also writes the old split T0/T1 aggregate/detail text files
+    -joint_aggs - with -sim and -legacy_reports, also produces joined T0+T1 legacy files
+    -glossary - includes a glossary of the targets found with links
+    -digest - includes an abbridged analysis of Tier 0 and Tier 1 reports
     -silent - no intermediate output at all
     -help - this screen
     -nofiles - no files are created
-    -toscreen - writes output to screen
+    -toscreen - writes the readable report to screen
     -pickle - writes a Python pickle for easy posterior analysis (see internal documentation)
 ```
 
-Essentially it allows to search for ChEMBL structural similars and ellaborating a report out of it
+Essentially it allows to search for structural similars (Currently using ChEMBLE REST APIs only) and ellaborating a report out of it
 
 
 ## Molecular activity annotation
@@ -132,13 +141,13 @@ The tool also has a input file, option where for instance we might group a set o
 
 The simplest way of running the csanno is by testing only one molecule that can function as an input
 
-Using the `-mol` option writes the result directly to the screen. Therefore running the app with zolpidem (SMILES:CN(C)C(=O)Cc1c(nc2ccc(C)cn12)c3ccc(C)cc3)
+Therefore running the app with zolpidem (SMILES:CN(C)C(=O)Cc1c(nc2ccc(C)cn12)c3ccc(C)cc3)
 
 ```sh
-$ python csanno.py -mol CN(C)C(=O)Cc1c(nc2ccc(C)cn12)c3ccc(C)cc3
+$ ython csanno.py -mol CN(C)C(=O)Cc1c(nc2ccc(C)cn12)c3ccc(C)cc3 -sim 0.7 -out data\zolpidem-A
 ```
 
-will produce the following output:
+will produce the [following output]
 
 ```
 TSPO                 1  1.0000
@@ -154,7 +163,7 @@ This result is a table which must be read this way. In the first column it is th
 
 ### Simple multiple molecule annotation
 
-To test for the multiple targets we have created a simple file with 5 molecules, all known anti depressants to show the common binding profiles 
+To test for the multiple targets we will use the above mentioned file 5 molecules, all known anti depressants to show the common binding profiles 
 
 ```
 Sertraline	NA	ClC1=CC=C([C@H]2C3=C([C@H](CC2)NC)C=CC=C3)C=C1Cl
@@ -164,91 +173,3 @@ Tradozone	NA	Clc4cccc(N3CCN(CCCN1/N=C2/C=C\C=C/N2C1=O)CC3)c4
 Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 ```
 
-Running the following command
-
-```sh
-$ python csanno.py -in anti-dep.sar -sim 0.7 -report AD 
-```
-
-will produce 2 files. The name of those files is created based on the .sar file. So using `anti-dep.sar` will produce:
-
-* `anti-dep_anno_count_T0.txt` - This is a Tier 0 file and will contain the absolute and relative frequencies of the molecules in the input file that appear to be active in specific targets
-* `anti-dep_anno_count_T1.txt` - This is a Tier 1 file and will contain the the absolute and relative frequencies of the molecules **that are similar** to the molecules in the input file to each specific target in which they were found active
-
-The tier 0 file thus refers to the known targets in single-gene essays that are know to bind to these proteins. `anti-dep_anno_count_T0.txt` will look something like this:
-
-
-```
-SLC6A4	    5	1.0000
-SLC6A3	    4	0.8000
-SLC6A2	    4	0.8000
-SIGMAR1    4	0.8000
-HTR2C	    4	0.8000
-REP	    3	0.6000
-NET	    3	0.6000
-KCNH2	    3	0.6000
-HTR2B	    3	0.6000
-```
-
-This file is actually 52 lines long but only the top 8 are shown. It shows which are the individual targets common in all of them. As we can see, [SLC6A4](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A4) (the serotonin transporter) is common to all 5 molecules, followed by [SLC6A3](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A3) and [SLC6A2](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC6A2) the dopamine and noradrenaline transporter, respectively. Also the the [Sigma1](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SIGMA1) Receptor and the [Serotonin 2C receptor](https://www.genecards.org/cgi-bin/carddisp.pl?gene=HTR2C) are known to be affected by 4 out of 5 molecules
-
-On the other hand we can look at `anti-dep_anno_count_T1.txt` for potential targets, as these refer to the activity profiles of similar molecules (in this case 70% similar) 
-
-```
-SLC6A4	   64	0.6737
-SLC6A2	   29	0.3053
-SLC6A3	   24	0.2526
-REP	    8	0.0842
-ADRA1A	    8	0.0842
-NET	    7	0.0737
-HTR2A	    6	0.0632
-SIGMAR1    4	0.0421
-```
-of the 183 molecules found, the top spots were essentially the same, but the [ADRA1A](https://www.genecards.org/cgi-bin/carddisp.pl?gene=ADRA1A) Adrenergic A1 receptor and the [NET](https://www.genecards.org/cgi-bin/carddisp.pl?gene=NET), the norepinephrine transporter, appear with a high representativity. Troubling might be the presence of [HTR2A](https://www.genecards.org/cgi-bin/carddisp.pl?gene=HTR2A), in 6% of all matches. 
-
-To have a better look at which of the base molecules are associated, we may run the above command again with the following option `-report AD` This will create two more files that stand for the individual targets each molecule was active on. The format is a standard 'transaction type' file with one line for each molecule, followed by the found targets, named similarly to the other two files created:
-
-* `anti-dep_annotations_T0.txt` - binding targets to each molecule in the input file
-* `anti-dep_annotations_T1.txt` - binding targets to each molecule similar to the molecules in the input file.
-
-Therefore `anti-dep_annotations_T0.txt` with the above options will look like this (end of lines arranged for this report, in the original, only one line per molecule is produced):
-
-```
-Sertraline:	ADRA2B	CACNA1C	KMT2A	SIGMAR1	CYP3A4	ADRA2A	HTR2B	REP	CYP2C19	
-              CHRM1	KCNH2	CHRM4	ADRA2C	MC5R	CHRM5	HTR2A	SLC6A3	HTR2C	CYP2D6	ADRA1B	
-              TMEM97	SLC6A2	CHRM2	SLC6A4
-Citalopran:	TMEM97	ADRA1B	SLC6A2	HRH1	KCNH2	ADRA1A	NET	SIGMAR1	SMN2	ADRA1D	
-              SLC6A3	HTR2C	REP	HTR2B	SLC6A4	SLC22A1
-Fluoxetine:	ABCB1	ADRA2B	CACNA1C	KCNK9	SIGMAR1	NET	HRH3	ACHE	CYP3A4	
-              ADRA2A	SLCO1B1	HTR3A	CYP2C19	CHRM1	CYP2C9	HRH1	KCNH2	LMNA	
-              KCNK2	CHRM5	CYP2B6	HTR6	CHRM3	HTR2A	DRD2	SLC6A3	SLCO2B1	HTR2C	
-              CYP1A2	CYP2D6	CYP2C8	SLC6A2	SLCO1B3	SLC6A4
-Tradozone:	ADRA2C	HTR1B	ADRA2B	SLC6A4	HRH1	ADRA1A	SIGMAR1	HTR2A	DRD3	ALB	
-              ADRA1D	DRD2	FAAH	HTR2C	ADRA2A	HTR2B	HTR1A	ADRA1B
-Venlafaxine:	SLC6A2	ADRA1A	NET	LMNA	SLC6A3	REP	SLC6A4
-```
-
-Similarly `anti-dep_annotations_T1.txt` with the above options will look like this:
-
-
-```
-Sertraline:	NFKB1	TMEM97	SLCO1B3	SLCO1B1	REP	HTR2A	KCNH2	CYP3A4	ADRA1B	
-              CHRM2	SLC6A2	NET	NS1	MAPK1	SLC6A3	ADRA2A	SIGMAR1	CYP1A2	FFP	
-              ADRA2C	KMT2A	TP53	MC5R	CACNA1C	HTR2B	CYP2D6	CHRM4	SLC6A4	ADRA2B	
-              CHRM1	CHRM5	HTR2C	CYP2C19
-Citalopran:	NFKB1	TMEM97	SLCO1B3	SLCO1B1	REP	KCNH2	ADRA1B	CYP3A4	SLC6A2	
-              SLC22A1	ADRA1D	ADRA1A	NET	MAPK1	SLC6A3	SIGMAR1	ALOX15	SMN2	
-              CYP2C9	HTR2B	SLC6A4	CHRM1	HRH1	LMNA	HTR2C	CYP2C19
-Fluoxetine:	CYP2B6	NFKB1	HTR3A	CYP2C8	SLCO1B3	SLCO1B1	HTR2A	KCNK9	KCNH2	
-              DRD2	CYP3A4	KCNK2	SLC6A2	TSHR	NET	ADRA2A	SLC6A3	SIGMAR1	SLCO2B1
-              CYP1A2	HTR6	HRH3	SMN2	CYP2C9	CACNA1C	BLM	CYP2D6	ACHE	ABCB1	
-              RORC	SLC6A4	ADRA2B	CHRM1	HRH1	LMNA	CHRM3	CHRM5	HTR2C	AMPC	HPGD	
-              CYP2C19
-Tradozone:	FAAH	SLCO1B3	SLCO1B1	REP	HTR2A	DRD2	ADRA1B	SLC6A2	ADRA1D	
-              ADRA1A	HTR1A	ADRA2A	SIGMAR1	ADRA2C	HTR2B	ADRA2B	SLC6A4	HRH1	HTR2C	HTR1B	ALB	DRD3	HLA-A
-Venlafaxine:	SLC6A4	SLC6A2	LMNA	ADRA1A	NET	SLC6A3	REP
-```
-
-Please note that these results will include targets that do not apear on Tier 0, meaning possible targets never before tested, but some overlaps may naturally occur.
-
-As an example of a possible conclusion is that in some of the 70% similar molecules to Sertraline some of them were verified active on NET and CYP2C9, strongly suggesting that Sertraline itself, although not registered as active in these two targets, might actually be so. Other types of observations might be held for other molecules.
