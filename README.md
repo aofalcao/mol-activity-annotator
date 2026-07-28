@@ -20,6 +20,7 @@ The annotation profile of a molecule is essentially a report of the evidence tha
 * numpy
 * requests
 * rdkit
+* pyYAML
 
 Of those, rdkit is the trickiest to install. Anaconda makes the rdkit installation a breeze and this is the process recommended, although it might be possible to use a [docker container](https://hub.docker.com/search?q=rdkit&type=image) with rdkit already installed. To install rdkit with anaconda we can follow the [procedure detailed in the official rdkit distribution](https://www.rdkit.org/docs/Install.html):
 
