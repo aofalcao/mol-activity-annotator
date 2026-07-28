@@ -23,6 +23,8 @@
 
 from rdkit import Chem
 from rdkit.Chem.inchi import InchiToInchiKey
+from rdkit.Chem.MolStandardize import rdMolStandardize
+import argparse
 import pickle
 import os
 import sys
@@ -129,18 +131,6 @@ def warn(msg, silent=False):
         print("WARNING: %s" % msg)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def safe_float(x):
     try:
         if x is None:
@@ -148,8 +138,6 @@ def safe_float(x):
         return float(x)
     except (TypeError, ValueError):
         return None
-
-
 
 
 def normalise_relation(rel, activity_rules=None):
@@ -305,7 +293,7 @@ def apply_activity_rule(act, rule, activity_rules):
     else:
         return rel_rule.get("false_result", activity_rules.get("default_result", "NA"))
 
-def get_chem_data(smiles):
+def parse_molecule(smiles):
     if smiles is None:
         raise ValueError("Missing SMILES")
 
@@ -328,6 +316,28 @@ def get_chem_data(smiles):
     if m is None:
         raise ValueError("Invalid SMILES '%s'" % smiles)
 
+    return m
+
+
+def standardize_input_molecule(smiles):
+    m = parse_molecule(smiles)
+    try:
+        m = rdMolStandardize.Cleanup(m)
+        m = rdMolStandardize.FragmentParent(m)
+        m = rdMolStandardize.Uncharger().uncharge(m)
+        m = rdMolStandardize.IsotopeParent(m)
+        Chem.SanitizeMol(m)
+    except Exception as exc:
+        raise ValueError("Could not standardize SMILES '%s': %s" % (smiles, exc))
+
+    return Chem.MolToSmiles(m, canonical=True, isomericSmiles=True)
+
+
+def get_chem_data(smiles, standardize=False):
+    if standardize == True:
+        smiles = standardize_input_molecule(smiles)
+
+    m = parse_molecule(smiles)
     inchi = Chem.inchi.MolToInchi(m)
     inchikey = InchiToInchiKey(inchi)
     if inchikey is None or inchikey == "":
@@ -335,15 +345,17 @@ def get_chem_data(smiles):
     return inchikey
 
 
-def make_mol(smiles):
+def make_mol(smiles, standardize=False):
     mols = {}
+    if standardize == True:
+        smiles = standardize_input_molecule(smiles)
     ick = get_chem_data(smiles)
     mols["User1"] = (smiles, ick, "NA")
     return mols
                    
 
 
-def read_molecules(fname, silent=False):
+def read_molecules(fname, silent=False, standardize=False):
     #This must be the structure: (mol_id, activity, SMILES), separated by tabs
     #the activity need not be a float. If char, then it will be a classification model
     #blank lines and lines starting with # are ignored
@@ -379,6 +391,8 @@ def read_molecules(fname, silent=False):
                 act = act.strip()
 
             try:
+                if standardize == True:
+                    smiles = standardize_input_molecule(smiles)
                 ick = get_chem_data(smiles)
             except ValueError as exc:
                 warn("Skipping line %d (%s): %s" % (lno, molid, exc), silent)
@@ -393,30 +407,6 @@ def read_molecules(fname, silent=False):
         raise ValueError("No valid molecules were read from %s" % fname)
 
     return mols
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
-    
-
-    
-
-
-
 
 
 def check_activity(act, activity_rules=None):
@@ -434,20 +424,11 @@ def check_activity(act, activity_rules=None):
     return activity_rules.get("default_result", "NA")
     
     
-
-
-
-
-
-
-
-
-
 def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write_files=True, to_screen=False,
                          join_aggregates=False, silent=False, search="A", single_mol=None, ofield="G",
                          chembl_server=DEFAULT_CHEMBL_SERVER, rules_file=None, activity_rules=None,
                          legacy_reports=False, report_format="markdown", include_glossary=True, include_digest=True,
-                         out_file=None, run_command=None):
+                         out_file=None, run_command=None, standardize=False):
     """Main entry point.
 
     The default file output is now:
@@ -494,13 +475,12 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
         run_info_file = None
 
     if single_mol is not None:
-        mols = make_mol(single_mol)
+        mols = make_mol(single_mol, standardize=standardize)
     else:
         if fname is not None:
-            mols = read_molecules(fname, silent=silent)
+            mols = read_molecules(fname, silent=silent, standardize=standardize)
         else:
-            print("No input file! Nothing to do. Exiting")
-            exit()
+            raise ValueError("No input file or molecule was provided")
 
     metadata = build_run_metadata(csanno_version=version,
                                   input_file=fname,
@@ -651,208 +631,174 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
 
 
 
-def print_help():
-    s = """
-Usage: This is a Python tool and requires an enviroment where RDkit and requests are installed.
-       To run type: python csanno.py  -in [input .sar file] [options] OR
-                    python csanno.py  -mol [molecule SMILES] [options]
-Control parameters:
-    -in file_name - the data set to annotate (required) (.sar format)
-    -sim thr - similarity threshold [if absent (default) no similarity search will be performed]
-    -mol [molecule in SMILES format] - molecule for which analysis is going to be performed.  
-         Incompatible with -in option
-    -report [AD]: A - aggregate report;
-                  D - Detailed report (one line for each molecule)
-                  Both options simultaneously are permitted and both reports are produced
-    -search [ANU] A - searches for actives in the database (default);
-                  N - searches non-actives in exact ChEMBL matches; 
-                  U - searches unknowns in exact ChEMBL matches;
-                  Similarity reports use the same search option
-                  All options can be included simultaneously 
-    -ofield [GUO] G - outputs the unique gene (default);
-                  U - outputs the uniprot id;
-                  O - outputs the organism;
-                  All options can be included simultaneously
-    -chembl_server URL - ChEMBL-compatible data server [default: https://www.ebi.ac.uk]
-    -rules YAML_file - YAML file defining active/non-active/uncertain classification rules
+def build_arg_parser():
+    parser = argparse.ArgumentParser(
+        prog="csanno.py",
+        add_help=False,
+        description=(
+            "Annotate molecules with direct ChEMBL evidence (Tier 0) and, "
+            "optionally, evidence from structurally similar ChEMBL molecules (Tier 1)."
+        ),
+    )
 
-Output Control Options:
-    By default, CSANNO writes one readable Markdown report (<root>_report.md) and one
-    JSON report (<root>_results.json) containing metadata and raw data.
-    -out file_name - output file name 
-    -outfmt [markdown|text] - writes the readable report as .md (default) or .txt
-    -legacy_reports - also writes the old split T0/T1 aggregate/detail text files
-    -joint_aggs - with -sim and -legacy_reports, also produces joined T0+T1 legacy files
-    -glossary - includes a glossary of the targets found with links
-    -digest - includes an abbridged analysis of Tier 0 and Tier 1 reports
-    -silent - no intermediate output at all
-    -help - this screen
-    -nofiles - no files are created
-    -toscreen - writes the readable report to screen
-    -pickle - writes a Python pickle for easy posterior analysis (see internal documentation)
-"""
-    print(version)
-    print(s.strip())
-    
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("-in", dest="input_file", metavar="FILE",
+                        help="input data set in three-column tab-separated .sar format")
+    inputs.add_argument("-mol", dest="mol", metavar="SMILES",
+                        help="analyse one molecule supplied as a SMILES string")
 
-version = "CSANNO - (C) 2019/2026 - Andre O. Falcao BioISI - DI/FCUL version 0.5.20260515"
-if __name__ == "__main__":
+    parser.add_argument("-sim", dest="sim_thr", type=float, metavar="THRESHOLD",
+                        help="enable Tier 1 similarity searching at this threshold")
+    parser.add_argument("-search", default="A", metavar="ANU",
+                        help="evidence classes to include: A, N and/or U (default: A)")
+    parser.add_argument("-report", default="AD", choices=["A", "D", "AD"],
+                        help="report sections: A, D or AD (default: AD)")
+    parser.add_argument("-ofield", default="G", metavar="GUO",
+                        help="target fields to output: G, U and/or O (default: G)")
+    parser.add_argument("-chembl_server", default=DEFAULT_CHEMBL_SERVER, metavar="URL",
+                        help="ChEMBL-compatible data server")
+    parser.add_argument("-rules", dest="rules_file", metavar="YAML_FILE",
+                        help="YAML file defining activity classification rules")
+    parser.add_argument("-standardize", action="store_true",
+                        help="standardize input molecules before Tier 0 and Tier 1 searches")
 
-    start_t = time.time()
-    if len(sys.argv) < 2:
-        print("Invalid option. Exiting")
-        exit()
-        
-    #defaults
-    report = "AD"  #default is only the aggregates
-    search = "A"  #default only actives 
-    ofield = "G"    #default, only outputs the Gene
-    do_sims = False
-    joint_aggs = False
-    sim_thr = 0.9
-    writefiles = True
-    silent = False
-    writepickle = False
-    to_screen = False
-    legacy_reports = False
-    report_format = "markdown"
-    mol = None
-    input_file = None
-    out_file = None
-    chembl_server = DEFAULT_CHEMBL_SERVER
-    rules_file = None
-    digest=False
-    glossary=False
-    
-    bin_args = ["-in", "-sim", "-search", "-report", "-mol", "-ofield", "-chembl_server", "-rules", "-outfmt", "-out"]
-    all_args = bin_args[:] + ["-silent", "-help", "--help", "-nofiles", "-pickle", "-joint_aggs", 
-                              "-toscreen", "-legacy_reports", "-legacy", "-digest", "-glossary"]
+    parser.add_argument("-out", dest="out_file", metavar="NAME",
+                        help="output file root")
+    parser.add_argument("-outfmt", default="markdown",
+                        choices=["markdown", "md", "text", "txt"],
+                        help="readable report format (default: markdown)")
+    parser.add_argument("-legacy_reports", "-legacy", dest="legacy_reports",
+                        action="store_true",
+                        help="also write the historical split report files")
+    parser.add_argument("-joint_aggs", action="store_true",
+                        help="with -sim and legacy reports, write joined T0+T1 reports")
+    parser.add_argument("-glossary", action="store_true",
+                        help="include a gene glossary")
+    parser.add_argument("-digest", action="store_true",
+                        help="include the report digest")
+    parser.add_argument("-silent", action="store_true",
+                        help="suppress intermediate output")
+    parser.add_argument("-nofiles", action="store_true",
+                        help="do not write output files")
+    parser.add_argument("-toscreen", action="store_true",
+                        help="write the readable report to the screen")
+    parser.add_argument("-pickle", dest="writepickle", action="store_true",
+                        help="write a Python pickle for later analysis")
+    parser.add_argument("-help", "--help", action="help",
+                        help="show this help message and exit")
+    parser.add_argument("--version", action="version", version=version)
 
-    inp_fs = sys.argv
-    run_command = shlex.join(sys.argv)
+    return parser
 
 
-    if '-help' in inp_fs or '--help' in inp_fs:
-        print_help()
-        exit()
 
-    #error checker
-    for arg in inp_fs[1:]:
-        if len(arg) > 0 and arg[0] == "-" and arg not in all_args:
-            print("'%s' Unknown Option. Exiting" % arg)
-            print("Run 'csanno.py --help'")
-            exit()
-	    
-    try:
-        #arg_screener
-        input_args = {}
-        for arg in bin_args:
-            if arg in inp_fs:
-                pos_val = inp_fs.index(arg) + 1
-                if pos_val >= len(inp_fs) or inp_fs[pos_val] in all_args:
-                    raise ValueError("Missing value for %s" % arg)
-                input_args[arg] = inp_fs[pos_val]
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
 
-        if '-in' in input_args:
-            input_file = input_args["-in"]
-        if '-sim' in input_args:
-            sim_thr = float(input_args["-sim"])
-            do_sims = True
-        if '-mol' in input_args:
-            mol = input_args["-mol"]
-            to_screen = True
-            input_file = None  #if -mol we will ignore any input file
-        if '-search' in input_args:
-            search = input_args["-search"]
-        if '-report' in input_args:
-            report = input_args["-report"]
-        if '-ofield' in input_args:
-            ofield = input_args["-ofield"]
-        if '-chembl_server' in input_args:
-            chembl_server = data_access.normalise_server(input_args["-chembl_server"])
-        if '-rules' in input_args:
-            rules_file = input_args["-rules"]
-        if '-outfmt' in input_args:
-            report_format = normalise_report_format(input_args["-outfmt"])[0]
-        if '-out' in input_args:
-            out_file = input_args["-out"]
-            writefiles = True
-            to_screen = False
-        
-        if '-nofiles' in inp_fs:
-            writefiles = False
-        if '-toscreen' in inp_fs:
-            to_screen = True
-        if '-silent' in inp_fs:
-            silent = True
-        if '-pickle' in inp_fs:
-            writepickle = True
-        if '-joint_aggs' in inp_fs:
-            joint_aggs = True
-        if '-legacy_reports' in inp_fs or '-legacy' in inp_fs:
-            legacy_reports = True
-        if '-digest' in inp_fs: 
-            digest = True
-        if '-glossary' in inp_fs: 
-            glossary = True
-        
-    except Exception as exc:
-        print("Illegal Option or Value. Exiting")
-        print(exc)
-        print("Run 'csanno.py --help'")
-        exit()
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
 
-    if input_file is None and mol is None: 
-        print("No input file! Nothing to do. Exiting")
-        exit()
+    run_command = shlex.join([sys.argv[0]] + list(argv))
+
+    report = args.report
+    search = args.search
+    ofield = args.ofield
+    do_sims = args.sim_thr is not None
+    joint_aggs = args.joint_aggs
+    sim_thr = args.sim_thr if args.sim_thr is not None else 0.9
+    writefiles = not args.nofiles
+    silent = args.silent
+    writepickle = args.writepickle
+    to_screen = args.toscreen
+    legacy_reports = args.legacy_reports
+    report_format = normalise_report_format(args.outfmt)[0]
+    mol = args.mol
+    input_file = args.input_file
+    out_file = args.out_file
+    chembl_server = data_access.normalise_server(args.chembl_server)
+    rules_file = args.rules_file
+    digest = args.digest
+    glossary = args.glossary
+    standardize = args.standardize
+
+    if mol is not None:
+        to_screen = True
+
+    if out_file is not None:
+        writefiles = True
+        to_screen = False
+
+    if input_file is None and mol is None:
+        parser.error("one of -in FILE or -mol SMILES is required")
 
     if len(set(search) - set("AUN")) > 0 or len(search) == 0 or len(search) > 3:
-        print("Invalid search option: %s  - Exiting" % search)
-        exit()
+        parser.error("invalid -search value %s; use A, N and/or U" % search)
 
     if len(set(ofield) - set("OGU")) > 0 or len(ofield) == 0 or len(ofield) > 3:
-        print("Invalid output field option: %s  - Exiting" % ofield)
-        exit()
-
-    if report not in ["A", "D", "AD"]:
-        print("Invalid report option: %s - Exiting" % report)
-        exit()
+        parser.error("invalid -ofield value %s; use O, G and/or U" % ofield)
 
     if sim_thr <= 0.0 or sim_thr > 1.0:
-        print("Invalid similarity threshold: %s - Exiting" % sim_thr)
-        exit()
+        parser.error("-sim threshold must be greater than 0 and at most 1")
 
-    if writefiles == False and to_screen == False: 
-        print("No files and no screen output. Nothing to see! Exiting")
-        exit()
-
+    if writefiles == False and to_screen == False:
+        parser.error("-nofiles requires -toscreen or -mol")
 
     if out_file is None:
-        if input_file is not None: out_file = os.path.splitext(input_file)[0]
-        else: out_file = "csanno_single_mol"
-            
+        if input_file is not None:
+            out_file = os.path.splitext(input_file)[0]
+        else:
+            out_file = "csanno_single_mol"
+
     try:
         if not silent:
             print(version)
 
-        rep = get_activity_profile(fname=input_file, do_sims=do_sims, thres=sim_thr, report=report,
-                                   search=search, join_aggregates=joint_aggs, write_files=writefiles,
-                                   to_screen=to_screen, silent=silent, single_mol=mol, ofield=ofield,
-                                   chembl_server=chembl_server, rules_file=rules_file,
-                                   legacy_reports=legacy_reports, report_format=report_format, 
-                                   include_glossary=glossary, include_digest=digest,
-                                   out_file=out_file, run_command=run_command)
+        rep = get_activity_profile(
+            fname=input_file,
+            do_sims=do_sims,
+            thres=sim_thr,
+            report=report,
+            search=search,
+            join_aggregates=joint_aggs,
+            write_files=writefiles,
+            to_screen=to_screen,
+            silent=silent,
+            single_mol=mol,
+            ofield=ofield,
+            chembl_server=chembl_server,
+            rules_file=rules_file,
+            legacy_reports=legacy_reports,
+            report_format=report_format,
+            include_glossary=glossary,
+            include_digest=digest,
+            out_file=out_file,
+            run_command=run_command,
+            standardize=standardize,
+        )
 
         if writepickle == True:
             if input_file is not None:
                 fname = input_file.replace(".sar", "") + "_annotations.pickle"
             else:
                 fname = "csanno_single_mol_annotations.pickle"
-            pickle.dump(rep, open(fname, "wb"))
+
+            with open(fname, "wb") as fil:
+                pickle.dump(rep, fil)
+
     except ValueError as exc:
-        print("Input error: %s" % exc)
-        exit()
+        print("Input error: %s" % exc, file=sys.stderr)
+        return 1
+
     except KeyboardInterrupt:
-        print("Interrupted by user")
-        exit()
-    #print("%9.4f secs" % (time.time() - start_t))
+        print("Interrupted by user", file=sys.stderr)
+        return 130
+
+    return 0
+
+
+version = "CSANNO - (C) 2019/2026 - Andre O. Falcao BioISI - DI/FCUL version 0.5.20260727"
+
+
+if __name__ == "__main__":
+    sys.exit(main())
