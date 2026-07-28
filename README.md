@@ -1,4 +1,4 @@
-# mol-activity-annotator
+# CSANNO: a molecular activity annotator
 
 `csanno` is a molecular annotator that uses ChEMBL to search to identify plausible targets. The question we are trying to solve in this program could be better defined with a simple example. Imagine we have one molecule and we want to identify probable targets in which it may be active. There are two possible situations: 
 
@@ -39,13 +39,16 @@ $ conda activate rdkit-env
 Windows users can omit the `conda` and just use `activate rdkit-env` at the windows command line prompt
 
 
-With Anaconda, numpy is installed by default and installing the others can be performed simply with: 
+### Using `requirements.txt`
+
+The file `requirements.txt` contains the required dependencies which will simplify installation. It can be run like this
 
 ```sh
-$ conda install requests
+$python3 -m pip install -r requirements.txt
 ```
 
-Just make sure these are installed within the `rdkit` environment. 
+It is nonetheless still recommended that rdkit is installed in a separate Python environment.
+
 
 ### Installing CSANNO
 
@@ -56,6 +59,9 @@ $ mkdir csanno
 $ cp [source code path]/*.py csanno/.
 $ cd csanno
 ```
+
+
+
 
 ### SAR files
 
@@ -84,31 +90,38 @@ $ python csanno.py -help
 ```
 producing
 ```
-(rdkit-env) C:\Users\aofal\Desktop\Projectos\CSANNO>python csanno.py -help
-CSANNO - (C) 2019/2026 - Andre O. Falcao BioISI - DI/FCUL version 0.5.20260515
-Usage: This is a Python tool and requires an enviroment where RDkit and requests are installed.
-       To run type: python csanno.py  -in [input .sar file] [options] OR
-                    python csanno.py  -mol [molecule SMILES] [options]
-Control parameters:
-    -in file_name - the data set to annotate (required) (.sar format)
-    -sim thr - similarity threshold [if absent (default) no similarity search will be performed]
-    -mol [molecule in SMILES format] - molecule for which analysis is going to be performed.
-         Incompatible with -in option
-    -report [AD]: A - aggregate report;
-                  D - Detailed report (one line for each molecule)
-                  Both options simultaneously are permitted and both reports are produced
-    -search [ANU] A - searches for actives in the database (default);
-                  N - searches non-actives in exact ChEMBL matches;
-                  U - searches unknowns in exact ChEMBL matches;
-                  Similarity reports use the same search option
-                  All options can be included simultaneously
-    -ofield [GUO] G - outputs the unique gene (default);
-                  U - outputs the uniprot id;
-                  O - outputs the organism;
-                  All options can be included simultaneously
-    -chembl_server URL - ChEMBL-compatible data server [default: https://www.ebi.ac.uk]
-    -rules YAML_file - YAML file defining active/non-active/uncertain classification rules
+usage: csanno.py [-in FILE | -mol SMILES] [-sim THRESHOLD] [-search ANU] [-report {A,D,AD}] [-ofield GUO]
+                 [-chembl_server URL] [-rules YAML_FILE] [-standardize] [-out NAME] [-outfmt {markdown,md,text,txt}]
+                 [-legacy_reports] [-joint_aggs] [-glossary] [-digest] [-silent] [-nofiles] [-toscreen] [-pickle]
+                 [-help] [--version]
 
+Annotate molecules with direct ChEMBL evidence (Tier 0) and, optionally, evidence from structurally similar ChEMBL
+molecules (Tier 1).
+
+options:
+  -in FILE              input data set in three-column tab-separated .sar format
+  -mol SMILES           analyse one molecule supplied as a SMILES string
+  -sim THRESHOLD        enable Tier 1 similarity searching at this threshold
+  -search ANU           evidence classes to include: A, N and/or U (default: A)
+  -report {A,D,AD}      report sections: A, D or AD (default: AD)
+  -ofield GUO           target fields to output: G, U and/or O (default: G)
+  -chembl_server URL    ChEMBL-compatible data server
+  -rules YAML_FILE      YAML file defining activity classification rules
+  -standardize          standardize input molecules before Tier 0 and Tier 1 searches
+  -out NAME             output file root
+  -outfmt {markdown,md,text,txt}
+                        readable report format (default: markdown)
+  -legacy_reports, -legacy
+                        also write the historical split report files
+  -joint_aggs           with -sim and legacy reports, write joined T0+T1 reports
+  -glossary             include a gene glossary
+  -digest               include the report digest
+  -silent               suppress intermediate output
+  -nofiles              do not write output files
+  -toscreen             write the readable report to the screen
+  -pickle               write a Python pickle for later analysis
+  -help, --help         show this help message and exit
+  --version             show program's version number and exit
 Output Control Options:
     By default, CSANNO writes one readable Markdown report (<root>_report.md) and one
     JSON report (<root>_results.json) containing metadata and raw data.
@@ -164,7 +177,7 @@ Venlafaxine	NA	OC2(C(c1ccc(OC)cc1)CN(C)C)CCCCC2
 ```
 
 ```sh
-$ python csanno.py -in data\anti-dep.sar -sim 0.7 -report AD -digest -glossary
+$ python csanno.py -in data\anti-dep.sar -sim 0.7 -report AD -digest -glossary -standardize
 ```
 The above basically says:
 * Analyze the file `data\anti-dep.sar` by the direct evidence there is for the whole molecules
@@ -172,9 +185,10 @@ The above basically says:
 * Create an aggregate and detailed report (`-report AD`) getting, for each molecule and each tier (direct vs analogue evidence), the actual targets found, relative to the targets, how many analogues were identified there
 * create a digest - interpretable analysis of the results (`-digest`)
 * create a glossary of the targets found with links to Chembl and Uniprot (`-glossary`)
+* standardize all molecules for more robust searching
   
 
-Results can be [found here](https://github.com/aofalcao/mol-activity-annotator/blob/main/Reports/anti-dep_report.md)
+Results of this operation can be [found here](https://github.com/aofalcao/mol-activity-annotator/blob/main/Reports/anti-dep_report.md)
 
 
 
