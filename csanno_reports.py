@@ -181,6 +181,18 @@ def explain_options(metadata):
             % (rules.get("version", "unknown"), rules.get("source", "unknown"))
         )
 
+    if opts.get("standardize", False):
+       explanations.append(
+          "Molecular standardization enabled: RDKit Cleanup, "
+          "FragmentParent, Uncharger and IsotopeParent applied "
+          "before Tier 0 and Tier 1 retrieval."
+      )
+    else:
+       explanations.append(
+          "Molecular standardization disabled: input structures "
+          "used without additional standardization."
+      )
+
     return explanations
 
 
@@ -188,7 +200,7 @@ def build_run_metadata(csanno_version, input_file=None, single_mol=None, mols=No
                        chembl_server=None, do_sims=False, thres=None, search="A",
                        report="A", ofield="G", join_aggregates=False,
                        activity_rules=None, report_format="markdown",
-                       run_command=None):
+                       run_command=None, standardize=False ):
     """Create the metadata block required in the report and JSON."""
     mols = mols or {}
     activity_rules = activity_rules or {}
@@ -213,6 +225,7 @@ def build_run_metadata(csanno_version, input_file=None, single_mol=None, mols=No
             "ofield": _ordered_letters(ofield, "OGU"),
             "join_aggregates": bool(join_aggregates),
             "report_format": fmt_name,
+            "standardize": bool(standardize),
         },
         "activity_rules": {
             "version": activity_rules.get("activity_rules_version", "unknown"),
