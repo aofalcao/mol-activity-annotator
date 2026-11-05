@@ -495,7 +495,7 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
                                   join_aggregates=join_aggregates,
                                   activity_rules=activity_rules,
                                   report_format=report_format,
-                                  run_command=run_command)
+                                  run_command=run_command, standardize=standardize)
 
     if write_files == True and legacy_reports == True:
         write_run_info(run_info_file,
@@ -514,7 +514,7 @@ def get_activity_profile(fname=None, do_sims=False, thres=0.7, report="A", write
                         "ofield": ofield,
                         "join_aggregates": join_aggregates,
                         "readable_report": report_file,
-                        "json_report": report_json},
+                        "json_report": report_json, "standardize": standardize,},
                        silent=silent)
 
     mids = list(mols.keys())
