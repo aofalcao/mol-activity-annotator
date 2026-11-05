@@ -1,8 +1,6 @@
-# This CITATION.cff file was generated with cffinit.
-# Visit https://bit.ly/cffinit to generate yours today!
-
+# Citation metadata for CSANNO software
 cff-version: 1.2.0
-title: csanno - molecular-activity-annotator
+title: 'CSANNO: a tiered evidence-mining workflow for molecular activity annotation'
 message: >-
   If you use this software, please cite it using the
   metadata from this file.
@@ -16,16 +14,20 @@ authors:
     affiliation: DI/FCUL - Universidade de Lisboa
 repository-code: 'https://github.com/aofalcao/mol-activity-annotator'
 abstract: >-
-  csanno is a molecular activity annotator that uses
-  chemical similarity and ChEMBL to search to identify
-  plausible targets of molecules, even if they were never
-  tested and are not present in ChEMBL. The program  will
-  look for close similar molecules and produce reports on
-  the probable targets found.  
+  CSANNO is an open-source workflow for retrieving, classifying, aggregating,
+  and auditing experimental molecular activity evidence from ChEMBL.
+  It reports exact-compound evidence (Tier 0) separately from evidence
+  retrieved for structurally similar compounds (Tier 1), and classifies
+  retrieved records as active, non-active, or uncertain using configurable
+  rules. Gene-centred reports and compound-set summaries preserve evidence
+  provenance and support interpretation of target-associated activity.
+  CSANNO is an evidence-mining and annotation tool, not a de novo
+  target-prediction model.
 keywords:
-  - Chemical Database Screening
   - Cheminformatics
   - ChEMBL
-  - Molecular Activity
+  - Molecular Activity Annotation
+  - Bioactivity Evidence Mining
+  - Chemical Similarity
 license: MIT
 date-released: '2023-06-06'
